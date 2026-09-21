@@ -24,6 +24,8 @@ export interface HaltRecord {
 }
 
 export interface BacktestResult {
+  /** Orders the exchange would have refused for being below its minimum size. */
+  readonly rejectedOrders?: number;
   readonly strategy: { readonly name: string; readonly params: Readonly<Record<string, number>> };
   readonly config: BacktestConfig;
   readonly equityCurve: readonly EquityPoint[];
@@ -95,6 +97,7 @@ export function runBacktest(
   let pending: Pending | null = null;
   let entryBar = 0;
   let firstHalt: HaltRecord | null = null;
+  let rejectedOrders = 0;
   /** The exposure most recently acted on, which rebalancing is measured against. */
   let lastTarget = 0;
 
@@ -109,6 +112,13 @@ export function runBacktest(
     if (!position || sellQty <= 0) return;
     const qty = Math.min(sellQty, position.qty);
     const notional = qty * fillPrice;
+    // End-of-data liquidation is an accounting close, not an order, so it is
+    // exempt. Everything else the exchange would refuse is refused here too,
+    // which is how a position too small to sell shows up as the dust it is.
+    if (reason !== 'end-of-data' && notional < costs.minOrderNotional) {
+      rejectedOrders += 1;
+      return;
+    }
     const fee = feeOn(notional, costs);
     cash += notional - fee;
     const realized = position.realizedPnl + qty * (fillPrice - position.entryPrice);
@@ -149,6 +159,10 @@ export function runBacktest(
     const buyQty = Math.min(wantQty, maxQty);
     if (buyQty <= 0) return;
     const notional = buyQty * fillPrice;
+    if (notional < costs.minOrderNotional) {
+      rejectedOrders += 1;
+      return;
+    }
     const fee = feeOn(notional, costs);
     const equityNow = cash + (position ? position.qty * fillPrice : 0);
     cash -= notional + fee;
@@ -277,6 +291,7 @@ export function runBacktest(
     startingEquity: config.startingEquity,
     endingEquity: cash,
     firstHalt,
+    rejectedOrders,
     barsTested: candles.length,
   };
 }

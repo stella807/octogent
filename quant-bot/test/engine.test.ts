@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Candle, Position, Signal } from '../src/domain/types.ts';
 import { DEFAULT_CONFIG, runBacktest, type BacktestConfig } from '../src/backtest/engine.ts';
-import { DEFAULT_COSTS, FRICTIONLESS } from '../src/backtest/costs.ts';
+import { DEFAULT_COSTS, FRICTIONLESS, minimumViableEquity } from '../src/backtest/costs.ts';
 import { BENCHMARK_LIMITS, DEFAULT_LIMITS } from '../src/risk/risk-manager.ts';
 import type { Strategy } from '../src/strategy/types.ts';
 
@@ -248,5 +248,81 @@ describe('fractional exposure', () => {
       costs: DEFAULT_COSTS,
     });
     for (const point of result.equityCurve) expect(point.equity).toBeGreaterThan(0);
+  });
+});
+
+describe('exchange minimum order size', () => {
+  const flat = Array.from({ length: 30 }, (_, i) => bar(i, 100, 101, 99, 100));
+  const withMinimum = {
+    ...config,
+    costs: { ...DEFAULT_COSTS, minOrderNotional: 10 },
+    limits: { ...DEFAULT_LIMITS, riskPerTradePct: 1, maxPositionPct: 100 },
+  };
+
+  it('refuses a buy the exchange would reject, rather than pretending it filled', () => {
+    // 1% risk with a 50% stop sizes a $100 account at ~$2, under the $10 floor.
+    const result = runBacktest(flat, scripted(flat.map(() => ({ target: 1, stopPrice: 50 }))), {
+      ...withMinimum,
+      startingEquity: 100,
+    });
+    expect(result.trades).toHaveLength(0);
+    expect(result.rejectedOrders ?? 0).toBeGreaterThan(0);
+    expect(result.endingEquity).toBeCloseTo(100, 6);
+  });
+
+  it('lets the same strategy trade once the account clears the floor', () => {
+    const result = runBacktest(flat, scripted(flat.map(() => ({ target: 1, stopPrice: 50 }))), {
+      ...withMinimum,
+      startingEquity: 100_000,
+    });
+    expect(result.trades.length).toBeGreaterThan(0);
+  });
+
+  it('still closes a dust position at the end of the data', () => {
+    // Without the end-of-data exemption the run would report no trade at all
+    // and the equity curve would never reconcile against the trade list.
+    const result = runBacktest(flat, scripted(flat.map(() => ({ target: 1 }))), {
+      ...config,
+      costs: { ...DEFAULT_COSTS, minOrderNotional: 0.01 },
+      startingEquity: 1_000,
+    });
+    expect(result.trades).toHaveLength(1);
+    expect(result.trades[0]?.exitReason).toBe('end-of-data');
+  });
+
+  it('leaves normal-sized accounts completely unaffected', () => {
+    const script = flat.map(() => ({ target: 1, stopPrice: 90 }));
+    const withFloor = runBacktest(flat, scripted(script), { ...config, costs: DEFAULT_COSTS });
+    const noFloor = runBacktest(flat, scripted(script), {
+      ...config,
+      costs: { ...DEFAULT_COSTS, minOrderNotional: 0 },
+    });
+    expect(withFloor.endingEquity).toBeCloseTo(noFloor.endingEquity, 9);
+    expect(withFloor.rejectedOrders ?? 0).toBe(0);
+  });
+});
+
+describe('minimumViableEquity', () => {
+  it('is the exchange minimum divided by the position fraction', () => {
+    // 1% risk over a 10% stop distance is a 10% position, so $1 needs $10.
+    expect(minimumViableEquity(DEFAULT_COSTS, 1, 100, 10)).toBeCloseTo(10, 6);
+  });
+
+  it('rises as the stop widens, because the position shrinks', () => {
+    expect(minimumViableEquity(DEFAULT_COSTS, 1, 100, 50))
+      .toBeGreaterThan(minimumViableEquity(DEFAULT_COSTS, 1, 100, 10));
+  });
+
+  it('falls as risk per trade rises, which is the wrong way to fix a small account', () => {
+    expect(minimumViableEquity(DEFAULT_COSTS, 5, 100, 10))
+      .toBeLessThan(minimumViableEquity(DEFAULT_COSTS, 1, 100, 10));
+  });
+
+  it('is bounded by the position cap when the stop is very tight', () => {
+    expect(minimumViableEquity(DEFAULT_COSTS, 1, 50, 0.1)).toBeCloseTo(2, 6);
+  });
+
+  it('is zero when the exchange has no minimum', () => {
+    expect(minimumViableEquity(FRICTIONLESS, 1, 100, 10)).toBe(0);
   });
 });

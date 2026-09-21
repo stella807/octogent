@@ -1,7 +1,7 @@
 import type { BacktestResult } from './backtest/engine.ts';
 import { computeMetrics, type Metrics } from './backtest/metrics.ts';
 import type { MonteCarloResult } from './backtest/monte-carlo.ts';
-import { roundTripCost } from './backtest/costs.ts';
+import { minimumViableEquity, roundTripCost } from './backtest/costs.ts';
 import type { WalkForwardResult } from './backtest/walk-forward.ts';
 import { asBacktestResult, type PortfolioResult } from './portfolio/engine.ts';
 
@@ -71,7 +71,7 @@ export function formatBacktest(result: BacktestResult, benchmark?: BacktestResul
     lines.push(row('Verdict', verdict));
   }
 
-  lines.push(...realityCheck(m));
+  lines.push(...realityCheck(m, result));
   return lines.join('\n');
 }
 
@@ -79,8 +79,20 @@ export function formatBacktest(result: BacktestResult, benchmark?: BacktestResul
  * Printed on every report. Sample size is the thing most likely to make these
  * numbers meaningless, and it is the thing nobody checks voluntarily.
  */
-function realityCheck(m: Metrics): string[] {
+function realityCheck(m: Metrics, result: BacktestResult): string[] {
   const notes: string[] = [];
+  const { costs, limits } = result.config;
+  // A 2.5x ATR stop on a daily crypto bar sits roughly 10% below entry.
+  const floor = minimumViableEquity(costs, limits.riskPerTradePct, limits.maxPositionPct, 10);
+  if (m.startingEquity < floor) {
+    notes.push(
+      `At ${money(m.startingEquity)} the risk limits size a position below the ${money(costs.minOrderNotional)} exchange minimum, so real orders would be REJECTED. This account needs about ${money(floor)} before it can trade these settings at all.`,
+    );
+  }
+  const rejected = result.rejectedOrders ?? 0;
+  if (rejected > 0) {
+    notes.push(`${rejected} orders were below the exchange minimum and never placed.`);
+  }
   if (m.trades < 30) {
     notes.push(`${m.trades} trades is too few to distinguish edge from luck; treat every ratio above as noise.`);
   }

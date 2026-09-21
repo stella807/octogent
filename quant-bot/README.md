@@ -174,7 +174,7 @@ discovering it live.
 
 ```bash
 pnpm install
-pnpm test                 # 208 tests, no network needed
+pnpm test                 # 217 tests, no network needed
 pnpm build
 
 # Runs offline against seeded synthetic data
@@ -236,6 +236,27 @@ complexity.
 Small samples are called out automatically. Under 30 trades, the report tells
 you to disregard the ratios. An infinite profit factor is labelled as a
 sample-size artefact, not a perfect strategy.
+
+## How small an account can be
+
+Risk-based sizing makes the position a fraction of equity, so below some
+balance that fraction falls under the exchange minimum and every order is
+rejected. `--min-order` models that (Coinbase Advanced is around $1, Binance
+$5-10), and the report warns when the account cannot clear it.
+
+At 1% risk with a 2.5x ATR stop about 10% below entry, the position is roughly
+a tenth of the account, so a $1 minimum needs about **$10** to place one legal
+order. Run a backtest at `--equity 5` and it says so: **259 orders below the
+minimum, never placed**, and one trade in eight years.
+
+The dollar figures in every table above are percentages of the account, not
+fixed amounts. The same strategy that wins $2.98 and loses $40.04 on $10,000
+wins $0.0015 and loses $0.02 on $5, for the identical 2.10% return. Shrinking
+the account shrinks both sides equally — it caps what you can lose, which is
+real, and it does not improve anything.
+
+For learning, paper trading beats a small live account outright: no minimum
+order size, no dust, and the full strategy actually runs.
 
 ## Risk limits
 
@@ -351,7 +372,8 @@ src/
   data/        Exchange fetch with disk cache, CSV loader, synthetic generator
   live/        Broker interface, paper broker, gated exchange broker, runner
   report.ts    Text reports, including the automatic reality checks
-test/          208 tests
+docs/architecture.md   Diagrams of the pipeline, fill timing and kill switch
+test/          217 tests
 ```
 
 ## What this is not

@@ -67,6 +67,7 @@ export function runPortfolioBacktest(
     series.symbols.map((s) => [s, 0]),
   );
   let pending: readonly number[] | null = null;
+  let rejectedOrders = 0;
   let lastWeights: number[] = new Array(count).fill(0);
   let firstHalt: HaltRecord | null = null;
 
@@ -77,6 +78,12 @@ export function runPortfolioBacktest(
     if (!holding || qty <= 0) return;
     const sellQty = Math.min(qty, holding.qty);
     const notional = sellQty * price;
+    // Same exchange minimum the single-asset engine enforces; the end-of-data
+    // liquidation is an accounting close rather than an order, so it is exempt.
+    if (reason !== 'end-of-data' && notional < costs.minOrderNotional) {
+      rejectedOrders += 1;
+      return;
+    }
     const fee = feeOn(notional, costs);
     cash += notional - fee;
     holding.realizedPnl += sellQty * (price - holding.entryPrice);
@@ -116,6 +123,10 @@ export function runPortfolioBacktest(
     const qty = Math.min(wantQty, maxQty);
     if (qty <= 0) return;
     const notional = qty * price;
+    if (notional < costs.minOrderNotional) {
+      rejectedOrders += 1;
+      return;
+    }
     const fee = feeOn(notional, costs);
     cash -= notional + fee;
     const holding = holdings[s];
@@ -230,6 +241,7 @@ export function runPortfolioBacktest(
     startingEquity: config.startingEquity,
     endingEquity: cash,
     firstHalt,
+    rejectedOrders,
     barsTested: n,
   };
 }

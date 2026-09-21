@@ -52,6 +52,7 @@ Common
   --max-daily-loss 5     Percent daily loss that pauses trading
   --fee-bps 10           Taker fee per side
   --slippage-bps 5       Slippage per side
+  --min-order 1          Exchange minimum order size, in quote currency
   --param k=v            Override a strategy parameter (repeatable)
   --json                 Machine-readable output
 `;
@@ -80,6 +81,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       'max-position': { type: 'string', default: String(DEFAULT_LIMITS.maxPositionPct) },
       'fee-bps': { type: 'string', default: String(DEFAULT_COSTS.feeBps) },
       'slippage-bps': { type: 'string', default: String(DEFAULT_COSTS.slippageBps) },
+      'min-order': { type: 'string', default: String(DEFAULT_COSTS.minOrderNotional) },
       folds: { type: 'string', default: String(DEFAULT_WF_OPTIONS.folds) },
       objective: { type: 'string', default: DEFAULT_WF_OPTIONS.objective },
       runs: { type: 'string', default: String(DEFAULT_MC_OPTIONS.runs) },
@@ -109,6 +111,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     costs: {
       feeBps: num(values['fee-bps'], 'fee-bps'),
       slippageBps: num(values['slippage-bps'], 'slippage-bps'),
+      minOrderNotional: num(values['min-order'], 'min-order'),
     },
     limits,
     timeframe,
