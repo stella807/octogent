@@ -34,9 +34,33 @@ export interface BacktestResult {
   readonly barsTested: number;
 }
 
-type Pending =
-  | { readonly kind: 'enter'; readonly stopPrice: number | undefined; readonly reason: string }
-  | { readonly kind: 'exit'; readonly reason: string };
+/**
+ * A target exposure to reach at the next bar's open, rather than a buy/sell
+ * instruction. Expressing orders as a target is what lets a strategy hold a
+ * fraction of full size (volatility targeting, portfolio weights) without the
+ * engine having to know which kind of strategy produced it.
+ */
+interface Pending {
+  readonly target: number;
+  readonly stopPrice: number | undefined;
+  readonly reason: string;
+}
+
+/**
+ * How far the requested exposure must move before an existing position is
+ * resized, in fractions of equity.
+ *
+ * The comparison is against the target last acted on, not against the position
+ * the risk manager would size today. Those differ constantly — a trailing stop
+ * moves, equity drifts — so sizing off the latter makes a strategy that asks
+ * for the same exposure every bar retrade every bar. On eight years of BTC
+ * that quadrupled fees and took ~7 points off the return without changing a
+ * single entry or exit decision.
+ *
+ * A binary strategy holds its target at 1 and therefore never rebalances. Only
+ * a strategy that genuinely varies its exposure pays for the privilege.
+ */
+const REBALANCE_THRESHOLD = 0.1;
 
 /**
  * Bar-by-bar simulation with a strict causality rule:
@@ -70,68 +94,118 @@ export function runBacktest(
   let position: Position | null = null;
   let pending: Pending | null = null;
   let entryBar = 0;
-  let entryFee = 0;
-  let entryEquity = 0;
   let firstHalt: HaltRecord | null = null;
+  /** The exposure most recently acted on, which rebalancing is measured against. */
+  let lastTarget = 0;
 
-  const closePosition = (
+  /** Books a partial or full reduction, and emits a Trade when the position closes. */
+  const reduce = (
+    sellQty: number,
     fillPrice: number,
     time: number,
     barIndex: number,
     reason: ExitReason,
   ): void => {
-    if (!position) return;
-    const notional = position.qty * fillPrice;
-    const exitFee = feeOn(notional, costs);
-    cash += notional - exitFee;
-    const cost = position.qty * position.entryPrice;
-    const fees = entryFee + exitFee;
-    const pnl = notional - cost - fees;
+    if (!position || sellQty <= 0) return;
+    const qty = Math.min(sellQty, position.qty);
+    const notional = qty * fillPrice;
+    const fee = feeOn(notional, costs);
+    cash += notional - fee;
+    const realized = position.realizedPnl + qty * (fillPrice - position.entryPrice);
+    const fees = position.feesPaid + fee;
+    const remaining = position.qty - qty;
+
+    if (remaining > 1e-12) {
+      position = { ...position, qty: remaining, realizedPnl: realized, feesPaid: fees };
+      return;
+    }
+
+    const basis = position.peakQty * position.entryPrice;
+    const pnl = realized - fees;
     trades.push({
       entryTime: position.entryTime,
       exitTime: time,
       entryPrice: position.entryPrice,
       exitPrice: fillPrice,
-      qty: position.qty,
+      qty: position.peakQty,
       pnl,
-      pnlPct: cost > 0 ? pnl / cost : 0,
-      equityAtEntry: entryEquity,
-      returnOnEquity: entryEquity > 0 ? pnl / entryEquity : 0,
+      pnlPct: basis > 0 ? pnl / basis : 0,
+      equityAtEntry: position.equityAtEntry,
+      returnOnEquity: position.equityAtEntry > 0 ? pnl / position.equityAtEntry : 0,
       fees,
       exitReason: reason,
       barsHeld: barIndex - entryBar,
     });
     position = null;
-    entryFee = 0;
+  };
+
+  /** Books a new tranche, rolling the weighted-average cost forward. */
+  const add = (wantQty: number, fillPrice: number, time: number, barIndex: number): void => {
+    if (wantQty <= 0 || !Number.isFinite(wantQty) || fillPrice <= 0) return;
+    // Clamp to what cash covers rather than rejecting. The 1-ULP shrink
+    // matters: a fully-invested target computes a quantity whose notional plus
+    // fee rounds a hair above cash, and a strict `>` would decline to trade.
+    const maxQty = (cash / (fillPrice * (1 + costs.feeBps / 10_000))) * (1 - 1e-12);
+    const buyQty = Math.min(wantQty, maxQty);
+    if (buyQty <= 0) return;
+    const notional = buyQty * fillPrice;
+    const fee = feeOn(notional, costs);
+    const equityNow = cash + (position ? position.qty * fillPrice : 0);
+    cash -= notional + fee;
+
+    const current = position;
+    if (current === null) {
+      entryBar = barIndex;
+      position = {
+        qty: buyQty,
+        entryPrice: fillPrice,
+        entryTime: time,
+        stopPrice: undefined,
+        highWaterPrice: fillPrice,
+        realizedPnl: 0,
+        feesPaid: fee,
+        peakQty: buyQty,
+        equityAtEntry: equityNow,
+      };
+      return;
+    }
+    const total = current.qty + buyQty;
+    position = {
+      ...current,
+      qty: total,
+      entryPrice: (current.qty * current.entryPrice + notional) / total,
+      feesPaid: current.feesPaid + fee,
+      peakQty: Math.max(current.peakQty, total),
+    };
   };
 
   for (let i = 0; i < candles.length; i += 1) {
     const bar = candles[i] as Candle;
 
-    // 1. Fill whatever last bar's close decided, at this bar's open.
+    // 1. Move to the target decided at the last bar's close, at this bar's open.
     if (pending) {
-      if (pending.kind === 'enter' && position === null) {
-        const fill = buyFillPrice(bar.open, costs);
-        let qty = risk.sizePosition(cash, fill, pending.stopPrice);
-        // Never spend cash we do not have: the fee rides on top of the notional.
-        const affordable = cash / (fill * (1 + costs.feeBps / 10_000));
-        qty = Math.min(qty, affordable);
-        if (qty > 0 && Number.isFinite(qty)) {
-          const notional = qty * fill;
-          entryFee = feeOn(notional, costs);
-          entryEquity = cash;
-          cash -= notional + entryFee;
-          entryBar = i;
-          position = {
-            qty,
-            entryPrice: fill,
-            entryTime: bar.time,
-            stopPrice: pending.stopPrice,
-            highWaterPrice: bar.open,
-          };
+      const held = position?.qty ?? 0;
+      if (pending.target <= 0) {
+        if (held > 0) reduce(held, sellFillPrice(bar.open, costs), bar.time, i, 'signal');
+        lastTarget = 0;
+      } else {
+        const buyPrice = buyFillPrice(bar.open, costs);
+        const equity = cash + held * buyPrice;
+        const full = risk.sizePosition(equity, buyPrice, pending.stopPrice);
+        const target = Math.min(pending.target, 1);
+        const desired = full * target;
+        const delta = desired - held;
+        if (delta > 0) {
+          add(delta, buyPrice, bar.time, i);
+        } else if (delta < 0 && held > 0) {
+          reduce(-delta, sellFillPrice(bar.open, costs), bar.time, i, 'signal');
         }
-      } else if (pending.kind === 'exit' && position !== null) {
-        closePosition(sellFillPrice(bar.open, costs), bar.time, i, 'signal');
+        if (position !== null) lastTarget = target;
+        // `add`/`reduce` reassign `position`, so re-read it after those calls.
+        const opened: Position | null = position;
+        if (opened !== null && pending.stopPrice !== undefined) {
+          position = withStop(opened, pending.stopPrice);
+        }
       }
       pending = null;
     }
@@ -139,7 +213,7 @@ export function runBacktest(
     // 2. Resting stop, checked against this bar's low.
     if (position !== null && position.stopPrice !== undefined && bar.low <= position.stopPrice) {
       const touched = bar.open <= position.stopPrice ? bar.open : position.stopPrice;
-      closePosition(sellFillPrice(touched, costs), bar.time, i, 'stop');
+      reduce(position.qty, sellFillPrice(touched, costs), bar.time, i, 'stop');
     }
 
     if (position !== null && bar.close > position.highWaterPrice) {
@@ -158,7 +232,7 @@ export function runBacktest(
     const state = risk.onBar(bar.time, equity);
     if (state.flatten) {
       if (position !== null) {
-        closePosition(sellFillPrice(bar.close, costs), bar.time, i, 'risk-halt');
+        reduce(position.qty, sellFillPrice(bar.close, costs), bar.time, i, 'risk-halt');
       }
       if (firstHalt === null) {
         firstHalt = { kind: state.halt, reason: state.reason, time: bar.time };
@@ -170,21 +244,29 @@ export function runBacktest(
     // 5. Ask the strategy. Skip the final bar: an order there could never fill.
     if (i >= strategy.warmup && i < candles.length - 1) {
       const signal = strategy.signalAt(i, position);
-      if (signal.target > 0 && position === null) {
-        pending = { kind: 'enter', stopPrice: signal.stopPrice, reason: signal.reason ?? '' };
-      } else if (signal.target <= 0 && position !== null) {
-        pending = { kind: 'exit', reason: signal.reason ?? '' };
-      } else if (position !== null && signal.stopPrice !== undefined) {
-        // Stops ratchet up only. A stop that can be loosened is not a stop.
-        const next = Math.max(position.stopPrice ?? signal.stopPrice, signal.stopPrice);
-        position = { ...position, stopPrice: next };
+      const wantsExit = signal.target <= 0 && position !== null;
+      const wantsEntry = signal.target > 0 && position === null;
+      const wantsResize = position !== null
+        && Math.abs(signal.target - lastTarget) >= REBALANCE_THRESHOLD;
+      if (wantsExit || wantsEntry || wantsResize) {
+        pending = {
+          target: signal.target,
+          stopPrice: signal.stopPrice,
+          reason: signal.reason ?? '',
+        };
+      }
+      // Stops ratchet up only, and take effect immediately rather than waiting
+      // for the next fill: a stop that can be loosened is not a stop.
+      const open: Position | null = position;
+      if (open !== null && signal.stopPrice !== undefined) {
+        position = withStop(open, signal.stopPrice);
       }
     }
   }
 
   if (position !== null && candles.length > 0) {
     const last = candles[candles.length - 1] as Candle;
-    closePosition(sellFillPrice(last.close, costs), last.time, candles.length - 1, 'end-of-data');
+    reduce(position.qty, sellFillPrice(last.close, costs), last.time, candles.length - 1, 'end-of-data');
   }
 
   return {
@@ -197,6 +279,11 @@ export function runBacktest(
     firstHalt,
     barsTested: candles.length,
   };
+}
+
+/** Raises a stop, never lowers it. */
+function withStop(position: Position, stopPrice: number): Position {
+  return { ...position, stopPrice: Math.max(position.stopPrice ?? stopPrice, stopPrice) };
 }
 
 function assertChronological(candles: readonly Candle[]): void {

@@ -94,11 +94,87 @@ Read that honestly:
 No strategy in this repo will turn $50 into $5,000. That is the honest result,
 and a tool that reports it is worth more than one that doesn't.
 
+## The bear market, which is where strategies actually get judged
+
+Every backtest that ends today ends near an all-time high, and that flatters
+everything in it. `--since` / `--until` exist so you can point the tool at the
+window that matters. Nov 2021 - Dec 2022, same fees:
+
+| strategy | return | max drawdown | avg exposure |
+|---|---|---|---|
+| buy-and-hold | **−72.96%** | 76.67% | 99.8% |
+| vol-target | −9.10% | 11.69% | 2.1% |
+| ema-crossover | −2.34% | 2.43% | 0.4% |
+| donchian-breakout | **−1.66%** | 1.77% | 0.4% |
+
+```bash
+node --experimental-strip-types src/cli.ts compare \
+  --exchange coinbase --symbol BTC/USD --since 2021-11-01 --until 2022-12-31
+```
+
+This is the entire case for trend following. It does not beat buy-and-hold in a
+bull market and it is not supposed to. It loses 1.7% in the year buy-and-hold
+loses 73%, and that is what lets you still be trading afterwards.
+
+## Volatility targeting, and why the win rate is 25%
+
+`vol-target` sizes inversely to realised volatility: hold less when the market
+is wild, more when it is calm, so risk stays roughly constant instead of
+tracking whatever the asset is doing. It is the one idea here that institutions
+actually run. Eight years of BTC/USD:
+
+```
+Total return       398.38%        Win rate          25.49%
+CAGR                21.59%        LOSS RATE         74.51%
+Max drawdown        20.19%        Worst streak      8 losses
+Calmar                1.07        Payoff ratio      8.23
+```
+
+Compare that to the 98.82% bot above. This one **loses three trades out of
+four**, and it is the one that makes money, because its wins are eight times
+the size of its losses. Win rate and profitability are close to unrelated.
+
+One honest caveat, and it is a big one: walk-forward on the same data returns
+only **+4.73% out-of-sample** with an efficiency of 0.67. The 398% comes from
+parameters that happen to suit the whole sample. The out-of-sample number is
+the one to believe, and the gap between them is exactly what walk-forward
+exists to expose.
+
+## Portfolio mode
+
+The single biggest real improvement available, because it diversifies the
+drawdowns rather than trying to predict better. `cross-sectional-momentum`
+ranks a universe by trailing return, holds the strongest few, and requires
+positive absolute momentum so it sits in cash when everything is falling.
+
+Six Coinbase pairs (BTC, ETH, SOL, LTC, LINK, AVAX), weekly rebalance:
+
+| | return | max drawdown | **Calmar** |
+|---|---|---|---|
+| cross-sectional-momentum | +213.8% | 40.5% | **1.03** |
+| equal-weight benchmark | +164.6% | 66.3% | 0.52 |
+
+Twice the risk-adjusted return of simply holding the basket.
+
+```bash
+node --experimental-strip-types src/cli.ts portfolio \
+  --exchange coinbase --strategy cross-sectional-momentum \
+  --symbols BTC/USD,ETH/USD,SOL/USD,LTC/USD,LINK/USD,AVAX/USD --max-drawdown 40
+```
+
+Two things the report tells you that the headline number does not. **Per-symbol
+contribution**: SOL and AVAX produced most of the gain, so the diversification
+was partly nominal. And at the default 25% drawdown limit the kill switch fires
+in Jan 2024 and the strategy never trades again — +171% instead of +214%, with
+10% time in market. A concentrated crypto portfolio needs a wider limit than a
+single-asset trend system, and the tool makes you confront that rather than
+discovering it live.
+
 ## Quick start
 
 ```bash
 pnpm install
-pnpm test                 # 145 tests, no network needed
+pnpm test                 # 208 tests, no network needed
 pnpm build
 
 # Runs offline against seeded synthetic data
@@ -117,6 +193,7 @@ node --experimental-strip-types src/cli.ts compare \
 | `compare` | Every strategy over the same history and the same costs |
 | `walkforward` | What survives when parameters are chosen without seeing the test data |
 | `montecarlo` | How much of the result was the order the trades happened to arrive in |
+| `portfolio` | A multi-asset strategy against an equal-weight benchmark |
 | `paper` | Live market data, simulated fills, no real money |
 | `live` | Real orders. Two independent gates stand in front of it. |
 
@@ -192,6 +269,24 @@ shows 3% average exposure and 28% returns instead of 1126%. You can raise
 `--risk`, and the drawdown rises with it, linearly. There is no setting that
 gives you the return without the drawdown.
 
+## Running it continuously
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+docker compose logs -f paper
+```
+
+Paper mode by default: no credentials, no real money. State lives in a named
+volume, which is the point — `restart: unless-stopped` means a crashing
+container comes straight back, and a kill switch that reset on restart would be
+no kill switch at all. A tripped halt stays tripped until a human deletes the
+state file.
+
+The image runs as an unprivileged user and contains no credentials. Live
+trading still requires `--live` and `QUANT_BOT_LIVE_CONFIRM`, neither of which
+is baked in.
+
 ## Going live
 
 Paper trading is the default and needs no credentials. Live trading requires
@@ -226,7 +321,15 @@ not the primary protection.
 | `donchian-breakout` | trend, N-bar channel + ATR stop | Low win rate, high payoff — survives regime change |
 | `ema-crossover` | trend, fast/slow EMA + ATR stop | The simplest trend filter that works |
 | `rsi-mean-reversion` | oversold dips above a trend filter | High win rate; included to show that shape's risk |
+| `vol-target` | exposure inverse to realised volatility | 25% win rate, 8:1 payoff. What actually works. |
 | `take-profit-scalp` | tiny target, distant or absent stop | **Not for trading.** The 99%-win-rate demo above. |
+
+Multi-asset strategies, for the `portfolio` command:
+
+| strategy | shape |
+|---|---|
+| `equal-weight` | Hold the whole universe evenly. The portfolio benchmark. |
+| `cross-sectional-momentum` | Hold the strongest few, in cash when all are falling. |
 
 Adding one means implementing `Strategy` in `src/strategy/` and registering it.
 The contract is a single rule: `signalAt(i)` may read `candles[0..i]` and nothing
@@ -248,7 +351,7 @@ src/
   data/        Exchange fetch with disk cache, CSV loader, synthetic generator
   live/        Broker interface, paper broker, gated exchange broker, runner
   report.ts    Text reports, including the automatic reality checks
-test/          145 tests
+test/          208 tests
 ```
 
 ## What this is not

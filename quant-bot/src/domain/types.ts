@@ -54,11 +54,20 @@ export const FLAT: Signal = { target: 0 };
 
 export interface Position {
   readonly qty: number;
+  /** Weighted-average cost, which moves as the position is added to. */
   readonly entryPrice: number;
   readonly entryTime: number;
   readonly stopPrice: number | undefined;
   /** Highest close seen while the position was open, for trailing stops. */
   readonly highWaterPrice: number;
+  /** P&L already booked by partial reductions of this position. */
+  readonly realizedPnl: number;
+  /** Fees paid so far across every tranche of this position. */
+  readonly feesPaid: number;
+  /** Largest quantity held, used as the cost basis when reporting the trade. */
+  readonly peakQty: number;
+  /** Account equity when the first tranche was opened. */
+  readonly equityAtEntry: number;
 }
 
 export type ExitReason =

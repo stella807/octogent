@@ -29,6 +29,10 @@ const openPosition: Position = {
   entryTime: 0,
   stopPrice: 90,
   highWaterPrice: 110,
+  realizedPnl: 0,
+  feesPaid: 0,
+  peakQty: 0.1,
+  equityAtEntry: 10_000,
 };
 
 /**

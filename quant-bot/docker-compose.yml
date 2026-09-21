@@ -1,0 +1,35 @@
+services:
+  paper:
+    build: .
+    image: quant-bot:latest
+    restart: unless-stopped
+    # Paper trading needs no credentials. .env is read anyway so the same
+    # compose file works for a live deployment without being edited.
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Runner state, and the reason the kill switch is meaningful: a container
+      # that restarts on crash must not come back with a cleared halt. The
+      # volume outlives the container, so a tripped kill switch stays tripped
+      # until a human deletes the file.
+      - quant-state:/app/.quant-bot
+      - quant-cache:/app/data/cache
+    command:
+      - paper
+      - --exchange=coinbase
+      - --symbol=BTC/USD
+      - --timeframe=1d
+      - --strategy=donchian-breakout
+      - --equity=10000
+      - --risk=1
+      - --max-drawdown=25
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  quant-state:
+  quant-cache:

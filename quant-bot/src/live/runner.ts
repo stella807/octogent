@@ -191,6 +191,12 @@ function toPosition(state: RunnerState, qty: number): Position | null {
     entryTime: state.entryTime ?? 0,
     stopPrice: state.stopPrice ?? undefined,
     highWaterPrice: state.highWaterPrice ?? state.entryPrice,
+    // The live runner holds one tranche at a time, so there is nothing
+    // realized or averaged yet; these exist for the backtester's partial fills.
+    realizedPnl: 0,
+    feesPaid: 0,
+    peakQty: qty,
+    equityAtEntry: state.peakEquity,
   };
 }
 

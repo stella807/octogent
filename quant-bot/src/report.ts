@@ -3,6 +3,7 @@ import { computeMetrics, type Metrics } from './backtest/metrics.ts';
 import type { MonteCarloResult } from './backtest/monte-carlo.ts';
 import { roundTripCost } from './backtest/costs.ts';
 import type { WalkForwardResult } from './backtest/walk-forward.ts';
+import { asBacktestResult, type PortfolioResult } from './portfolio/engine.ts';
 
 const money = (n: number): string =>
   `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
@@ -152,5 +153,36 @@ export function formatMonteCarlo(mc: MonteCarloResult, startingEquity: number): 
   );
   lines.push('  honest answer to "what are the chances this loses money". It is not zero,');
   lines.push('  and for any real strategy it never will be.');
+  return lines.join('\n');
+}
+
+export function formatPortfolio(
+  result: PortfolioResult,
+  benchmark: PortfolioResult,
+  coverage?: ReadonlyMap<string, number>,
+): string {
+  const lines: string[] = [];
+  lines.push(formatBacktest(asBacktestResult(result), asBacktestResult(benchmark)));
+  lines.push('\nPER-SYMBOL CONTRIBUTION');
+  const entries = Object.entries(result.contribution).sort((a, b) => b[1] - a[1]);
+  for (const [symbol, pnl] of entries) {
+    const trades = result.trades.filter((t) => t.symbol === symbol).length;
+    lines.push(row(symbol, `${money(pnl).padStart(14)}   ${trades} trades`));
+  }
+  const winners = entries.filter(([, pnl]) => pnl > 0).length;
+  lines.push(
+    `\n  ${winners} of ${entries.length} symbols contributed positively. Concentration in one`,
+  );
+  lines.push('  symbol means the diversification is nominal, not real.');
+
+  if (coverage) {
+    const thin = [...coverage.entries()].filter(([, c]) => c < 0.9);
+    if (thin.length > 0) {
+      lines.push('\n  History trimmed to the timestamps every symbol shares:');
+      for (const [symbol, c] of thin) {
+        lines.push(`    ${symbol}: ${(c * 100).toFixed(0)}% of its own bars survived alignment`);
+      }
+    }
+  }
   return lines.join('\n');
 }

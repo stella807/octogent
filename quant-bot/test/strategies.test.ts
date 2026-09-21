@@ -33,6 +33,10 @@ const held = (stopPrice?: number): Position => ({
   entryTime: 0,
   stopPrice,
   highWaterPrice: 120,
+  realizedPnl: 0,
+  feesPaid: 0,
+  peakQty: 1,
+  equityAtEntry: 10_000,
 });
 
 describe('registry', () => {

@@ -152,3 +152,32 @@ function assertPeriod(period: number): void {
     throw new RangeError(`indicator period must be a positive integer, got ${period}`);
   }
 }
+
+/** Log returns, aligned so slot `i` is the return from bar `i-1` to bar `i`. */
+export function logReturns(values: readonly number[]): number[] {
+  const out: number[] = new Array(values.length).fill(0);
+  for (let i = 1; i < values.length; i += 1) {
+    const prev = values[i - 1] as number;
+    const cur = values[i] as number;
+    out[i] = prev > 0 && cur > 0 ? Math.log(cur / prev) : 0;
+  }
+  return out;
+}
+
+/**
+ * Bars per year, inferred from the median spacing of the candles themselves.
+ *
+ * Taking the median rather than the mean keeps a single exchange outage or a
+ * missing bar from halving the estimate, which would then halve every
+ * annualised volatility computed from it.
+ */
+export function barsPerYear(candles: readonly Candle[]): number {
+  if (candles.length < 2) return 365;
+  const gaps: number[] = [];
+  for (let i = 1; i < candles.length; i += 1) {
+    gaps.push((candles[i] as Candle).time - (candles[i - 1] as Candle).time);
+  }
+  gaps.sort((a, b) => a - b);
+  const median = gaps[Math.floor(gaps.length / 2)] ?? 86_400_000;
+  return median > 0 ? (365 * 86_400_000) / median : 365;
+}

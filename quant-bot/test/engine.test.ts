@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Candle, Position, Signal } from '../src/domain/types.ts';
 import { DEFAULT_CONFIG, runBacktest, type BacktestConfig } from '../src/backtest/engine.ts';
 import { DEFAULT_COSTS, FRICTIONLESS } from '../src/backtest/costs.ts';
-import { BENCHMARK_LIMITS } from '../src/risk/risk-manager.ts';
+import { BENCHMARK_LIMITS, DEFAULT_LIMITS } from '../src/risk/risk-manager.ts';
 import type { Strategy } from '../src/strategy/types.ts';
 
 const DAY = 86_400_000;
@@ -154,5 +154,99 @@ describe('input validation', () => {
   it('rejects a non-positive starting equity', () => {
     expect(() => runBacktest([bar(0, 1, 1, 1, 1)], scripted([]), { ...config, startingEquity: 0 }))
       .toThrow(RangeError);
+  });
+});
+
+describe('fractional exposure', () => {
+  const flat = Array.from({ length: 30 }, (_, i) => bar(i, 100, 101, 99, 100));
+
+  /** Exposure recorded once the position is established. */
+  const settledExposure = (target: number): number => {
+    const result = runBacktest(flat, scripted(new Array(30).fill({ target, stopPrice: 50 })), {
+      ...config,
+      limits: { ...DEFAULT_LIMITS, riskPerTradePct: 5, maxPositionPct: 100 },
+    });
+    return result.equityCurve[20]?.exposure ?? 0;
+  };
+
+  it('scales the position by the requested target', () => {
+    const full = settledExposure(1);
+    const half = settledExposure(0.5);
+    expect(full).toBeGreaterThan(0);
+    expect(half).toBeCloseTo(full / 2, 6);
+  });
+
+  it('treats a target above 1 as fully invested rather than levered', () => {
+    expect(settledExposure(2)).toBeCloseTo(settledExposure(1), 9);
+  });
+
+  it('does not retrade while the target is unchanged', () => {
+    // The risk-manager size drifts every bar as equity moves; sizing off that
+    // instead of off the last acted-on target churns fees for no decision.
+    const rising = Array.from({ length: 200 }, (_, i) =>
+      bar(i, 100 + i, 101 + i, 99 + i, 100 + i));
+    const result = runBacktest(rising, scripted(new Array(200).fill({ target: 1 })), {
+      ...config,
+      costs: DEFAULT_COSTS,
+    });
+    expect(result.trades).toHaveLength(1);
+    // One entry plus the end-of-data exit: two fills, not two hundred.
+    const roundTrip = result.trades[0]?.fees ?? 0;
+    expect(roundTrip).toBeLessThan(result.startingEquity * 0.01);
+  });
+
+  it('ignores a target change smaller than the rebalance threshold', () => {
+    const script = flat.map((_, i) => ({ target: i < 10 ? 1 : 0.95, stopPrice: 50 }));
+    const result = runBacktest(flat, scripted(script), { ...config, costs: DEFAULT_COSTS });
+    const before = result.equityCurve[8]?.exposure ?? 0;
+    const after = result.equityCurve[25]?.exposure ?? 0;
+    expect(after).toBeCloseTo(before, 6);
+  });
+
+  it('acts on a target change larger than the rebalance threshold', () => {
+    const script = flat.map((_, i) => ({ target: i < 10 ? 1 : 0.5, stopPrice: 50 }));
+    const result = runBacktest(flat, scripted(script), { ...config, costs: DEFAULT_COSTS });
+    const before = result.equityCurve[8]?.exposure ?? 0;
+    const after = result.equityCurve[25]?.exposure ?? 0;
+    expect(after).toBeLessThan(before * 0.6);
+  });
+
+  it('books a partial reduction without closing the trade', () => {
+    const script = flat.map((_, i) => ({ target: i < 10 ? 1 : 0.4, stopPrice: 50 }));
+    const result = runBacktest(flat, scripted(script), config);
+    // Scaling down is not an exit: still one round trip, closed at end of data.
+    expect(result.trades).toHaveLength(1);
+    expect(result.trades[0]?.exitReason).toBe('end-of-data');
+  });
+
+  it('rolls the entry price forward as a weighted average when adding', () => {
+    // Price falls between the two tranches, so the average must land between
+    // them. Scaling up after a RISE would instead shrink the position, since
+    // the existing holding already exceeds the target notional.
+    const dipping = [
+      bar(0, 100, 101, 99, 100),
+      bar(1, 100, 101, 99, 100), // entry at 100, half size
+      bar(2, 50, 51, 49, 50), // scale up: the add fills at 50
+      bar(3, 50, 51, 49, 50),
+      bar(4, 50, 51, 49, 50),
+    ];
+    const result = runBacktest(dipping, scripted([
+      { target: 0.5, stopPrice: 10 },
+      { target: 1, stopPrice: 10 },
+      { target: 1, stopPrice: 10 },
+      { target: 1, stopPrice: 10 },
+      { target: 1, stopPrice: 10 },
+    ]), config);
+    const entry = result.trades[0]?.entryPrice ?? 0;
+    expect(entry).toBeGreaterThan(50);
+    expect(entry).toBeLessThan(100);
+  });
+
+  it('keeps cash non-negative while scaling in', () => {
+    const result = runBacktest(flat, scripted(flat.map(() => ({ target: 1 }))), {
+      ...config,
+      costs: DEFAULT_COSTS,
+    });
+    for (const point of result.equityCurve) expect(point.equity).toBeGreaterThan(0);
   });
 });

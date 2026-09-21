@@ -3,6 +3,7 @@ import { donchianBreakout } from './donchian-breakout.ts';
 import { emaCrossover } from './ema-crossover.ts';
 import { rsiMeanReversion } from './rsi-mean-reversion.ts';
 import { takeProfitScalp } from './take-profit-scalp.ts';
+import { volTarget } from './vol-target.ts';
 import type { StrategyFactory } from './types.ts';
 
 export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
@@ -11,6 +12,7 @@ export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
   [donchianBreakout.name]: donchianBreakout,
   [rsiMeanReversion.name]: rsiMeanReversion,
   [takeProfitScalp.name]: takeProfitScalp,
+  [volTarget.name]: volTarget,
 };
 
 export function getStrategy(name: string): StrategyFactory {
@@ -23,5 +25,12 @@ export function getStrategy(name: string): StrategyFactory {
   return factory;
 }
 
-export { buyAndHold, donchianBreakout, emaCrossover, rsiMeanReversion, takeProfitScalp };
+export {
+  buyAndHold,
+  donchianBreakout,
+  emaCrossover,
+  rsiMeanReversion,
+  takeProfitScalp,
+  volTarget,
+};
 export * from './types.ts';

@@ -8,20 +8,25 @@ import { DEFAULT_MC_OPTIONS, monteCarlo } from './backtest/monte-carlo.ts';
 import { DEFAULT_WF_OPTIONS, walkForward, type Objective } from './backtest/walk-forward.ts';
 import { loadCsv } from './data/csv.ts';
 import { fetchCandles } from './data/exchange.ts';
+import { barsForRange, clipToRange, parseRange, type DateRange } from './data/range.ts';
 import { generateCandles } from './data/synthetic.ts';
 import { BENCHMARK_LIMITS, DEFAULT_LIMITS, type RiskLimits } from './risk/risk-manager.ts';
-import { formatBacktest, formatMonteCarlo, formatWalkForward } from './report.ts';
+import { formatBacktest, formatMonteCarlo, formatPortfolio, formatWalkForward } from './report.ts';
 import { buyAndHold, getStrategy, STRATEGIES } from './strategy/index.ts';
 import type { Params } from './strategy/types.ts';
 import { PaperBroker } from './live/paper-broker.ts';
 import { ExchangeBroker, LIVE_CONFIRM_ENV, LIVE_CONFIRM_VALUE } from './live/exchange-broker.ts';
 import { LiveRunner } from './live/runner.ts';
+import { alignCandles, alignmentCoverage } from './portfolio/align.ts';
+import { runPortfolioBacktest } from './portfolio/engine.ts';
+import { equalWeight, getPortfolioStrategy, PORTFOLIO_STRATEGIES } from './portfolio/index.ts';
 
 const USAGE = `
 quant-bot — crypto strategy research and paper trading
 
   backtest     Run one strategy over history and print the full risk report
   compare      Run every strategy plus buy-and-hold, side by side
+  portfolio    Run a multi-asset strategy against an equal-weight benchmark
   walkforward  Pick parameters out-of-sample and report what survived
   montecarlo   Resample trade order to show the real spread of outcomes
   paper        Trade live market data with simulated fills (no real money)
@@ -31,10 +36,14 @@ Data (pick one; defaults to --synthetic so it runs with no network)
   --symbol BTC/USDT      Exchange pair
   --exchange binance     Any ccxt-supported exchange
   --csv path.csv         timestamp,open,high,low,close,volume
+  --since 2021-11-01     Start of the window (UTC). Enables bear-only tests.
+  --until 2022-12-31     End of the window (UTC)
   --synthetic            Seeded regime-switching simulation, for smoke tests
 
 Common
   --strategy NAME        ${Object.keys(STRATEGIES).join(' | ')}
+                         portfolio: ${Object.keys(PORTFOLIO_STRATEGIES).join(' | ')}
+  --symbols A,B,C        Universe for the portfolio command
   --timeframe 1d         1m 5m 15m 1h 4h 1d
   --bars 1500            How much history to use
   --equity 10000         Starting equity in quote currency
@@ -60,6 +69,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     options: {
       strategy: { type: 'string', default: 'donchian-breakout' },
       symbol: { type: 'string', default: 'BTC/USDT' },
+      symbols: { type: 'string', default: 'BTC/USD,ETH/USD,SOL/USD,LTC/USD,LINK/USD,AVAX/USD' },
       exchange: { type: 'string', default: 'binance' },
       timeframe: { type: 'string', default: '1d' },
       bars: { type: 'string', default: '1500' },
@@ -74,6 +84,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       objective: { type: 'string', default: DEFAULT_WF_OPTIONS.objective },
       runs: { type: 'string', default: String(DEFAULT_MC_OPTIONS.runs) },
       csv: { type: 'string' },
+      since: { type: 'string' },
+      until: { type: 'string' },
       synthetic: { type: 'boolean', default: false },
       seed: { type: 'string', default: '42' },
       param: { type: 'string', multiple: true, default: [] },
@@ -101,7 +113,11 @@ export async function main(argv: readonly string[]): Promise<number> {
     limits,
     timeframe,
   };
-  const bars = Math.trunc(num(values.bars, 'bars'));
+  const range = parseRange(values.since as string | undefined, values.until as string | undefined);
+  if (range.since !== undefined && range.until !== undefined && range.since >= range.until) {
+    throw new Error('--since must be earlier than --until');
+  }
+  const bars = barsForRange(range, timeframe, Math.trunc(num(values.bars, 'bars')));
   const overrides = parseParams(values.param as string[]);
 
   const loadData = (): Promise<Candle[]> => loadCandles({
@@ -111,6 +127,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     exchange: values.exchange as string,
     timeframe,
     bars,
+    range,
     seed: Math.trunc(num(values.seed, 'seed')),
   });
 
@@ -157,6 +174,49 @@ export async function main(argv: readonly string[]): Promise<number> {
           'match a 100%-exposure benchmark on raw return, and should not be asked to.\n' +
           'If buy-and-hold still wins on Calmar, the honest move is to buy and hold.\n',
         );
+      }
+      return 0;
+    }
+
+    case 'portfolio': {
+      const universe = (values.symbols as string).split(',').map((s) => s.trim()).filter(Boolean);
+      if (universe.length < 2) {
+        throw new Error('--symbols needs at least two symbols for a portfolio');
+      }
+      const loaded = new Map<string, Candle[]>();
+      for (const symbol of universe) {
+        loaded.set(symbol, await loadCandles({
+          csv: undefined,
+          synthetic: values.synthetic as boolean,
+          symbol,
+          exchange: values.exchange as string,
+          timeframe,
+          bars,
+          range,
+          // A distinct seed per symbol, so synthetic universes are not ten
+          // copies of the same series pretending to be diversified.
+          seed: Math.trunc(num(values.seed, 'seed')) + universe.indexOf(symbol),
+        }));
+      }
+      const series = alignCandles(loaded);
+      const factory = getPortfolioStrategy(values.strategy === 'donchian-breakout'
+        ? 'cross-sectional-momentum'
+        : values.strategy as string);
+      const params = { ...factory.defaults, ...overrides };
+      const result = runPortfolioBacktest(series, factory.create(series, params), config);
+      const bench = runPortfolioBacktest(
+        series,
+        equalWeight.create(series, equalWeight.defaults),
+        benchmarkConfig(config),
+      );
+      if (values.json) {
+        emit({
+          metrics: computeMetrics(result),
+          benchmark: computeMetrics(bench),
+          contribution: result.contribution,
+        });
+      } else {
+        process.stdout.write(`${formatPortfolio(result, bench, alignmentCoverage(loaded, series))}\n`);
       }
       return 0;
     }
@@ -257,19 +317,34 @@ async function loadCandles(options: {
   exchange: string;
   timeframe: Timeframe;
   bars: number;
+  range: DateRange;
   seed: number;
 }): Promise<Candle[]> {
-  if (options.csv) return loadCsv(options.csv);
+  if (options.csv) return clipToRange(await loadCsv(options.csv), options.range);
   if (options.synthetic) {
-    return generateCandles({ bars: options.bars, timeframe: options.timeframe, seed: options.seed });
+    const generated = generateCandles({
+      bars: options.bars,
+      timeframe: options.timeframe,
+      seed: options.seed,
+      ...(options.range.since === undefined ? {} : { startTime: options.range.since }),
+    });
+    return clipToRange(generated, options.range);
   }
-  return fetchCandles({
+  const candles = await fetchCandles({
     exchange: options.exchange,
     symbol: options.symbol,
     timeframe: options.timeframe,
     bars: options.bars,
+    since: options.range.since,
+    until: options.range.until,
     cacheDir: 'data/cache',
   });
+  if (candles.length === 0) {
+    throw new Error(
+      `no candles returned for ${options.symbol} on ${options.exchange} in that range; try a different exchange or a later --since`,
+    );
+  }
+  return candles;
 }
 
 function parseParams(entries: readonly string[]): Params {
