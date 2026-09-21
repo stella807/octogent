@@ -7,6 +7,8 @@ import {
   rsiMeanReversion,
   STRATEGIES,
   takeProfitScalp,
+  tsmom,
+  bollingerReversion,
 } from '../src/strategy/index.ts';
 import { DEFAULT_CONFIG, runBacktest } from '../src/backtest/engine.ts';
 import { DEFAULT_COSTS } from '../src/backtest/costs.ts';
@@ -230,5 +232,88 @@ describe('the win-rate trap is real, not rhetorical', () => {
     const text = formatBacktest(runBacktest(candles, strategy, config));
     expect(text).toMatch(/REALITY CHECK/);
     expect(text).toMatch(/This shape blows up/);
+  });
+});
+
+describe('tsmom', () => {
+  const rising = ramp(Array.from({ length: 300 }, (_, i) => 100 + i));
+  const falling = ramp(Array.from({ length: 300 }, (_, i) => 400 - i));
+
+  it('is long when the trailing lookback return is positive', () => {
+    const strategy = tsmom.create(rising, tsmom.defaults);
+    const signal = strategy.signalAt(299, null);
+    expect(signal.target).toBe(1);
+    expect(signal.reason).toMatch(/> 0/);
+  });
+
+  it('is flat when the trailing lookback return is zero or negative', () => {
+    const strategy = tsmom.create(falling, tsmom.defaults);
+    const signal = strategy.signalAt(299, null);
+    expect(signal.target).toBe(0);
+    expect(signal.reason).toMatch(/<= 0/);
+  });
+
+  it('reads only the lookback window, nothing before it', () => {
+    // A crash long before the lookback window must not affect today's signal.
+    const recovered = ramp([
+      ...Array.from({ length: 50 }, (_, i) => 500 - i * 5), // crash
+      ...Array.from({ length: 250 }, (_, i) => 100 + i), // steady climb
+    ]);
+    const strategy = tsmom.create(recovered, { lookback: 90, atrPeriod: 14, atrStopMult: 3 });
+    expect(strategy.signalAt(299, null).target).toBe(1);
+  });
+
+  it('never lowers an existing stop', () => {
+    const strategy = tsmom.create(rising, tsmom.defaults);
+    const high = (rising[299]?.close ?? 0) - 1;
+    expect(strategy.signalAt(299, held(high)).stopPrice).toBe(high);
+  });
+
+  it('is flat during warmup', () => {
+    expect(tsmom.create(rising, tsmom.defaults).signalAt(5, null).target).toBe(0);
+  });
+
+  it('rejects a lookback too short to measure anything', () => {
+    expect(() => tsmom.create(rising, { lookback: 1 })).toThrow(RangeError);
+  });
+});
+
+describe('bollinger-reversion', () => {
+  it('refuses to buy a dip below the trend filter', () => {
+    const falling = ramp(Array.from({ length: 400 }, (_, i) => 500 - i));
+    const strategy = bollingerReversion.create(falling, bollingerReversion.defaults);
+    const signal = strategy.signalAt(399, null);
+    expect(signal.target).toBe(0);
+    expect(signal.reason).toMatch(/below trend filter/);
+  });
+
+  it('buys only once price is entryZ standard deviations below its mean', () => {
+    // A flat run, then one sharp single-bar dip: z-score should spike below
+    // -entryZ on the dip bar and nowhere else in the flat region.
+    const flatThenDip = ramp([
+      ...new Array(250).fill(100),
+      80, // sharp one-bar dip
+    ]);
+    const strategy = bollingerReversion.create(flatThenDip, {
+      period: 20, entryZ: 2, exitZ: 0.5, trendPeriod: 50, atrStopMult: 3,
+    });
+    expect(strategy.signalAt(200, null).target).toBe(0);
+  });
+
+  it('exits once price reverts back toward the mean', () => {
+    const rising = ramp(Array.from({ length: 400 }, (_, i) => 100 + i));
+    const strategy = bollingerReversion.create(rising, bollingerReversion.defaults);
+    const signal = strategy.signalAt(399, held(90));
+    expect(signal.target).toBe(0);
+    expect(signal.reason).toMatch(/reverted/);
+  });
+
+  it('rejects an entry Z at or below the exit Z', () => {
+    expect(() => bollingerReversion.create([], { entryZ: 1, exitZ: 1 })).toThrow(/entryZ > exitZ/);
+  });
+
+  it('is flat during warmup', () => {
+    const series = ramp(Array.from({ length: 400 }, (_, i) => 100 + Math.sin(i / 10) * 5));
+    expect(bollingerReversion.create(series, bollingerReversion.defaults).signalAt(5, null).target).toBe(0);
   });
 });

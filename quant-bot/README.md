@@ -174,7 +174,7 @@ discovering it live.
 
 ```bash
 pnpm install
-pnpm test                 # 217 tests, no network needed
+pnpm test                 # 232 tests, no network needed
 pnpm build
 
 # Runs offline against seeded synthetic data
@@ -334,6 +334,49 @@ polls the position is unprotected. For any timeframe above a few minutes, also
 leave a resting stop order on the exchange — the runner's check is a backstop,
 not the primary protection.
 
+## Overnight research pass (2026-09-22)
+
+Searched for documented crypto strategies rather than inventing new ones, and
+tested whatever looked credible through the same walk-forward and bear-market
+checks as everything else here. Three findings, sources below.
+
+**1. Time-series momentum has real academic support — until costs are applied.**
+Evidence for the effect is strong at daily/weekly frequency, but "when
+appropriately assessed, accounting for transaction costs... many momentum
+portfolios are liquidated." Built `tsmom`: the textbook version (long when the
+trailing N-bar return is positive, nothing more elaborate). On real BTC data it
+walk-forwards to **-0.26% out-of-sample, efficiency 0.29** — most of its
+in-sample edge is curve fitting, and the report says so automatically. In the
+2021-2022 bear market, the specific regime the research says momentum should
+help most, it still loses more than the existing `donchian-breakout` and
+`ema-crossover` already in this repo (-3.07% vs -1.66% / -2.34%). The simpler
+the momentum rule, the more of it is fees. [Han, Kang & Ryu, SSRN](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4675565)
+
+**2. Z-score mean reversion has a vendor claim behind it, not a peer-reviewed one.**
+An industry backtest reported Z-scores beyond +/-2.5 reverting 81% of the time
+within 5 days. Built `bollinger-reversion` to test that threshold directly,
+with the same trend filter as the existing RSI strategy. It barely trades
+(10 trades in 8 years) and walk-forwards to **-1.60%, efficiency -0.16** —
+negative, meaning the out-of-sample result is worse than doing nothing. The
+claim did not survive contact with this repo's validation. [Coinquant, "Building a Mean-Reversion Strategy... Evidence from 78 Backtests"](https://www.coinquant.ai/blog/building-a-mean-reversion-strategy-in-cryptocurrency-markets-evidence-from-78-backtests)
+
+**3. Funding-rate arbitrage is the one strategy institutions actually call
+reliable — and it is deliberately out of scope.** It profits from the spread
+between a perpetual future's funding rate and spot, market-neutral because it
+holds spot long against a perpetual short. That requires leverage and a short
+position, both of which this project excludes on purpose: spot-only with no
+leverage bounds the worst case on any single position to the position itself.
+Implementing it responsibly would mean building liquidation handling and
+cross-market margin risk from scratch, not bolting a new strategy onto the
+existing spot engine. Real, but a different project. [Kraken, "Funding rate arbitrage in crypto"](https://www.kraken.com/learn/futures-trading-funding-rate-arbitrage)
+
+Net effect on what to trade: **nothing changes.** `donchian-breakout`,
+`ema-crossover`, and `vol-target` (with its walk-forward caveat already
+documented above) remain the only strategies in this repo whose out-of-sample
+numbers are worth anything. Two more ideas were tested and rejected by the same
+bar everything else here is held to, which is the point of building the bar
+first.
+
 ## Strategies
 
 | strategy | shape | why it is here |
@@ -343,6 +386,8 @@ not the primary protection.
 | `ema-crossover` | trend, fast/slow EMA + ATR stop | The simplest trend filter that works |
 | `rsi-mean-reversion` | oversold dips above a trend filter | High win rate; included to show that shape's risk |
 | `vol-target` | exposure inverse to realised volatility | 25% win rate, 8:1 payoff. What actually works. |
+| `tsmom` | textbook time-series momentum | Tested from literature; fails walk-forward (efficiency 0.29). |
+| `bollinger-reversion` | Z-score mean reversion vs. rolling mean | Tested from a vendor claim; fails walk-forward (efficiency -0.16). |
 | `take-profit-scalp` | tiny target, distant or absent stop | **Not for trading.** The 99%-win-rate demo above. |
 
 Multi-asset strategies, for the `portfolio` command:
@@ -373,7 +418,7 @@ src/
   live/        Broker interface, paper broker, gated exchange broker, runner
   report.ts    Text reports, including the automatic reality checks
 docs/architecture.md   Diagrams of the pipeline, fill timing and kill switch
-test/          217 tests
+test/          232 tests
 ```
 
 ## What this is not

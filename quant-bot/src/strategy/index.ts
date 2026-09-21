@@ -4,6 +4,8 @@ import { emaCrossover } from './ema-crossover.ts';
 import { rsiMeanReversion } from './rsi-mean-reversion.ts';
 import { takeProfitScalp } from './take-profit-scalp.ts';
 import { volTarget } from './vol-target.ts';
+import { tsmom } from './tsmom.ts';
+import { bollingerReversion } from './bollinger-reversion.ts';
 import type { StrategyFactory } from './types.ts';
 
 export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
@@ -13,6 +15,8 @@ export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
   [rsiMeanReversion.name]: rsiMeanReversion,
   [takeProfitScalp.name]: takeProfitScalp,
   [volTarget.name]: volTarget,
+  [tsmom.name]: tsmom,
+  [bollingerReversion.name]: bollingerReversion,
 };
 
 export function getStrategy(name: string): StrategyFactory {
@@ -32,5 +36,7 @@ export {
   rsiMeanReversion,
   takeProfitScalp,
   volTarget,
+  tsmom,
+  bollingerReversion,
 };
 export * from './types.ts';
