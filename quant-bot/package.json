@@ -1,0 +1,28 @@
+{
+  "name": "quant-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Crypto trading bot with a no-lookahead backtester, walk-forward validation, hard risk limits, and paper trading by default.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "quant-bot": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cli": "node --experimental-strip-types src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "optionalDependencies": {
+    "ccxt": "^4.4.0"
+  }
+}
