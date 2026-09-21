@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { Candle, Position } from '../src/domain/types.ts';
-import { donchianBreakout, emaCrossover, getStrategy, rsiMeanReversion, STRATEGIES } from '../src/strategy/index.ts';
+import {
+  donchianBreakout,
+  emaCrossover,
+  getStrategy,
+  rsiMeanReversion,
+  STRATEGIES,
+  takeProfitScalp,
+} from '../src/strategy/index.ts';
+import { DEFAULT_CONFIG, runBacktest } from '../src/backtest/engine.ts';
+import { DEFAULT_COSTS } from '../src/backtest/costs.ts';
+import { computeMetrics } from '../src/backtest/metrics.ts';
+import { generateCandles } from '../src/data/synthetic.ts';
+import { formatBacktest } from '../src/report.ts';
 
 const HOUR = 3_600_000;
 
@@ -132,5 +144,87 @@ describe('buy-and-hold', () => {
     const strategy = getStrategy('buy-and-hold').create(ramp([1, 2, 3]), {});
     expect(strategy.signalAt(0, null)).toEqual({ target: 1, reason: 'benchmark: always long' });
     expect(strategy.warmup).toBe(0);
+  });
+});
+
+describe('take-profit-scalp (the high-win-rate trap)', () => {
+  const rising = ramp(Array.from({ length: 300 }, (_, i) => 100 + i * 0.1));
+
+  it('enters immediately, because it never waits for a setup', () => {
+    const strategy = takeProfitScalp.create(rising, takeProfitScalp.defaults);
+    expect(strategy.signalAt(50, null).target).toBe(1);
+  });
+
+  it('exits the moment the tiny target is reached', () => {
+    const strategy = takeProfitScalp.create(rising, { takeProfitPct: 1, stopPct: 50 });
+    const open: Position = { ...held(50), entryPrice: 100 };
+    expect(strategy.signalAt(50, open).target).toBe(0); // close 105 >= 101
+    expect(strategy.signalAt(5, { ...open, entryPrice: 1_000 }).target).toBe(1);
+  });
+
+  it('holds a losing position rather than cutting it', () => {
+    const falling = ramp(Array.from({ length: 100 }, (_, i) => 500 - i));
+    const strategy = takeProfitScalp.create(falling, { takeProfitPct: 1, stopPct: 50 });
+    const signal = strategy.signalAt(99, { ...held(250), entryPrice: 500 });
+    expect(signal.target).toBe(1);
+    expect(signal.reason).toMatch(/waiting for the tiny target/);
+  });
+
+  it('never ratchets the stop, which is what makes the losses large', () => {
+    const strategy = takeProfitScalp.create(rising, { takeProfitPct: 5, stopPct: 50 });
+    // Entry far above the current price, so the target is nowhere near hit and
+    // the strategy is in its "hold the loser" branch.
+    const underwater: Position = { ...held(60), entryPrice: 1_000 };
+    expect(strategy.signalAt(299, underwater).stopPrice).toBe(60);
+  });
+
+  it('omits the stop entirely at stopPct = 0, the literal 100% win-rate setting', () => {
+    const strategy = takeProfitScalp.create(rising, { takeProfitPct: 1, stopPct: 0 });
+    expect(strategy.signalAt(50, null).stopPrice).toBeUndefined();
+  });
+
+  it('rejects a stop of 100% or more', () => {
+    expect(() => takeProfitScalp.create(rising, { takeProfitPct: 1, stopPct: 100 }))
+      .toThrow(RangeError);
+  });
+});
+
+describe('the win-rate trap is real, not rhetorical', () => {
+  // Synthetic data contains bear regimes, unlike the 2018-2026 BTC sample that
+  // makes this shape look survivable. That is the point of testing against it.
+  const candles = generateCandles({ bars: 2500, seed: 21 });
+  const config = { ...DEFAULT_CONFIG, costs: DEFAULT_COSTS };
+  const stops = [25, 50, 75, 95];
+
+  const run = (stopPct: number) => computeMetrics(runBacktest(
+    candles,
+    takeProfitScalp.create(candles, { takeProfitPct: 0.5, stopPct }),
+    config,
+  ));
+
+  it('manufactures a win rate above 85% at every stop width', () => {
+    for (const stopPct of stops) {
+      expect(run(stopPct).winRatePct, `stop ${stopPct}%`).toBeGreaterThan(85);
+    }
+  });
+
+  it('pays for that win rate with a payoff ratio far below 1', () => {
+    for (const stopPct of stops) {
+      // Each loss is worth many wins; that is the trade-off being hidden.
+      expect(run(stopPct).payoffRatio, `stop ${stopPct}%`).toBeLessThan(0.2);
+    }
+  });
+
+  it('still loses money at every stop width once the sample contains bear markets', () => {
+    for (const stopPct of stops) {
+      expect(run(stopPct).totalReturnPct, `stop ${stopPct}%`).toBeLessThan(0);
+    }
+  });
+
+  it('is flagged by the report as the shape that blows up', () => {
+    const strategy = takeProfitScalp.create(candles, { takeProfitPct: 0.5, stopPct: 50 });
+    const text = formatBacktest(runBacktest(candles, strategy, config));
+    expect(text).toMatch(/REALITY CHECK/);
+    expect(text).toMatch(/This shape blows up/);
   });
 });

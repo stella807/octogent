@@ -24,6 +24,49 @@ called **P(ending below start)**. On the default strategy over eight years of
 real BTC data that number is **1.40%**. It is small. It is not zero, and no
 amount of engineering will make it zero.
 
+## "Make it 99% profitable trades"
+
+A 99% win rate is easy. It is a dial, not an achievement, and `take-profit-scalp`
+is in this repo so you can turn it yourself: take a tiny profit immediately, put
+the stop far away, and the win rate goes wherever you point it.
+
+Same eight years of real BTC/USD, same fees:
+
+| takeProfit | stop | win rate | trades | return | avg win | avg loss |
+|---|---|---|---|---|---|---|
+| 0.5% | 50% | 96.41% | 223 | +5.3% | $5.82 | $90.67 |
+| 0.5% | 75% | 98.46% | 130 | +3.1% | $3.58 | $75.47 |
+| 0.25% | 90% | **98.82%** | 85 | **+2.1%** | $2.98 | $40.04 |
+
+98.82% of trades profitable. Over eight years it turned $10,000 into $10,210,
+while buy-and-hold made $122,600. Each loss erases thirteen wins.
+
+Now remove the stop entirely — which is what actually produces a *100%* win
+rate, because a position you never close is never a loss:
+
+```
+node --experimental-strip-types src/cli.ts backtest --exchange coinbase \
+  --symbol BTC/USD --bars 3000 --strategy take-profit-scalp \
+  --param takeProfitPct=0.5 --param stopPct=0
+```
+
+```
+Total return      -14.77%
+Win rate           80.00%      4 wins of ~$354, then one loss of $2,893
+Max drawdown       25.46%
+RISK HALT          drawdown 25.34% hit the 25% kill switch  (2018-08-08)
+```
+
+Three weeks in, the kill switch shut it down. That is the reel bot, in full:
+a near-perfect win rate, a screenshot-ready streak, and one trade that takes
+back all of it and more. On synthetic data containing actual bear markets,
+`take-profit-scalp` loses money at **every** stop width tested.
+
+The number that matters is not win rate. It is **expectancy**: average win ×
+win rate minus average loss × loss rate, after fees. A strategy winning 40% of
+the time with a 3:1 payoff beats one winning 99% of the time with a 1:13 payoff,
+and the second one is the one that gets sold to you.
+
 ## What it actually does on real data
 
 Eight years of BTC/USD daily bars from Coinbase (2018-07 → 2026-09), 0.10% taker
@@ -55,7 +98,7 @@ and a tool that reports it is worth more than one that doesn't.
 
 ```bash
 pnpm install
-pnpm test                 # 133 tests, no network needed
+pnpm test                 # 145 tests, no network needed
 pnpm build
 
 # Runs offline against seeded synthetic data
@@ -183,6 +226,7 @@ not the primary protection.
 | `donchian-breakout` | trend, N-bar channel + ATR stop | Low win rate, high payoff — survives regime change |
 | `ema-crossover` | trend, fast/slow EMA + ATR stop | The simplest trend filter that works |
 | `rsi-mean-reversion` | oversold dips above a trend filter | High win rate; included to show that shape's risk |
+| `take-profit-scalp` | tiny target, distant or absent stop | **Not for trading.** The 99%-win-rate demo above. |
 
 Adding one means implementing `Strategy` in `src/strategy/` and registering it.
 The contract is a single rule: `signalAt(i)` may read `candles[0..i]` and nothing
@@ -204,7 +248,7 @@ src/
   data/        Exchange fetch with disk cache, CSV loader, synthetic generator
   live/        Broker interface, paper broker, gated exchange broker, runner
   report.ts    Text reports, including the automatic reality checks
-test/          133 tests
+test/          145 tests
 ```
 
 ## What this is not
