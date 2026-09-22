@@ -4,6 +4,7 @@ import type { MonteCarloResult } from './backtest/monte-carlo.ts';
 import { minimumViableEquity, roundTripCost } from './backtest/costs.ts';
 import type { WalkForwardResult } from './backtest/walk-forward.ts';
 import { asBacktestResult, type PortfolioResult } from './portfolio/engine.ts';
+import type { SearchResult } from './backtest/search.ts';
 
 const money = (n: number): string =>
   `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
@@ -195,6 +196,50 @@ export function formatPortfolio(
         lines.push(`    ${symbol}: ${(c * 100).toFixed(0)}% of its own bars survived alignment`);
       }
     }
+  }
+  return lines.join('\n');
+}
+
+export function formatSearch(result: SearchResult, fullGridSize: number): string {
+  const lines: string[] = [];
+  lines.push(`\nSearch: ${result.strategy}`);
+  lines.push('='.repeat(64));
+  lines.push(`Full parameter grid: ${fullGridSize.toLocaleString()} combinations.`);
+  lines.push(`Tested: ${result.candidatesTested.toLocaleString()} (${result.candidatesSkipped} invalid, skipped).`);
+  lines.push(`Train: bars ${result.trainBars.from}-${result.trainBars.to}  |  Test (held out): bars ${result.testBars.from}-${result.testBars.to}\n`);
+
+  lines.push('The question this answers: across thousands of candidates, does');
+  lines.push('doing well on training data predict doing well on data it never saw?\n');
+
+  lines.push(row('Train/test Calmar correlation', result.trainTestCorrelation.toFixed(3)));
+  lines.push(row('Test Calmar: 10th / 50th / 90th pct',
+    `${result.testCalmarPercentiles.p10.toFixed(2)} / ${result.testCalmarPercentiles.p50.toFixed(2)} / ${result.testCalmarPercentiles.p90.toFixed(2)}`));
+  lines.push(row('Fraction with positive test Calmar', `${(result.testCalmarPositiveFraction * 100).toFixed(1)}%`));
+
+  if (result.bestOnTrain) {
+    lines.push('\nWhat "just pick the best one" would have gotten you:');
+    lines.push(row('Best candidate, by TRAIN Calmar', result.bestOnTrain.trainCalmar.toFixed(2)));
+    lines.push(row('  ...that same candidate, on TEST', result.bestOnTrain.testCalmar.toFixed(2)));
+    lines.push(row('  params', JSON.stringify(result.bestOnTrain.params)));
+  }
+
+  lines.push('');
+  if (Math.abs(result.trainTestCorrelation) < 0.15) {
+    lines.push(`Correlation near zero: which candidates looked best on training data was`);
+    lines.push(`close to unrelated to which ones actually did well afterward. Testing more`);
+    lines.push(`candidates from this grid does not find more edge -- it just raises the odds`);
+    lines.push(`that some candidate got lucky on the training window, which is a false`);
+    lines.push(`positive waiting to be mistaken for a discovery.`);
+  } else if (result.trainTestCorrelation > 0) {
+    lines.push(`Positive correlation: training performance had SOME real relationship to`);
+    lines.push(`what happened afterward, though the size of the correlation is what decides`);
+    lines.push(`whether that is worth trusting -- weak positive correlation across a huge`);
+    lines.push(`grid is still mostly noise with a small real signal buried in it.`);
+  } else {
+    lines.push(`Negative correlation: candidates that looked BETTER on training data did`);
+    lines.push(`WORSE afterward. That is the signature of overfitting a large search space --`);
+    lines.push(`the best-looking candidates were the ones most specifically tuned to`);
+    lines.push(`quirks of the training window that did not repeat.`);
   }
   return lines.join('\n');
 }

@@ -11,7 +11,7 @@ import { fetchCandles } from './data/exchange.ts';
 import { barsForRange, clipToRange, parseRange, type DateRange } from './data/range.ts';
 import { generateCandles } from './data/synthetic.ts';
 import { BENCHMARK_LIMITS, CONSERVATIVE_LIMITS, DEFAULT_LIMITS, type RiskLimits } from './risk/risk-manager.ts';
-import { formatBacktest, formatMonteCarlo, formatPortfolio, formatWalkForward } from './report.ts';
+import { formatBacktest, formatMonteCarlo, formatPortfolio, formatSearch, formatWalkForward } from './report.ts';
 import { buyAndHold, getStrategy, STRATEGIES } from './strategy/index.ts';
 import type { Params } from './strategy/types.ts';
 import { PaperBroker } from './live/paper-broker.ts';
@@ -23,6 +23,7 @@ import type { StrategyContext } from './strategy/types.ts';
 import { runPortfolioBacktest } from './portfolio/engine.ts';
 import { equalWeight, getPortfolioStrategy, PORTFOLIO_STRATEGIES } from './portfolio/index.ts';
 import { asBacktestResult as blendAsBacktestResult, runBlend } from './backtest/blend.ts';
+import { expandFineGrid, range as gridRange, runSearch } from './backtest/search.ts';
 
 const USAGE = `
 quant-bot — crypto strategy research and paper trading
@@ -31,6 +32,7 @@ quant-bot — crypto strategy research and paper trading
   compare      Run every strategy plus buy-and-hold, side by side
   portfolio    Run a multi-asset strategy against an equal-weight benchmark
   blend        Run several strategies at once, each on its own slice of capital
+  search       Test thousands of parameter combinations, train vs. held-out test
   walkforward  Pick parameters out-of-sample and report what survived
   montecarlo   Resample trade order to show the real spread of outcomes
   paper        Trade live market data with simulated fills (no real money)
@@ -94,6 +96,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       folds: { type: 'string', default: String(DEFAULT_WF_OPTIONS.folds) },
       objective: { type: 'string', default: DEFAULT_WF_OPTIONS.objective },
       runs: { type: 'string', default: String(DEFAULT_MC_OPTIONS.runs) },
+      candidates: { type: 'string', default: '10000' },
       csv: { type: 'string' },
       since: { type: 'string' },
       until: { type: 'string' },
@@ -288,6 +291,29 @@ export async function main(argv: readonly string[]): Promise<number> {
       return 0;
     }
 
+    case 'search': {
+      const candles = await loadData();
+      const factory = getStrategy(values.strategy as string);
+      const fineGrid = FINE_GRIDS[factory.name];
+      if (!fineGrid) {
+        throw new Error(
+          `search has no fine-grained grid defined for "${factory.name}". Available: ${Object.keys(FINE_GRIDS).join(', ')}`,
+        );
+      }
+      const allCandidates = expandFineGrid(fineGrid);
+      const result = runSearch(candles, factory, allCandidates, {
+        trainRatio: 0.6,
+        config,
+        maxCandidates: Math.trunc(num(values.candidates, 'candidates')),
+      });
+      if (values.json) {
+        emit(result);
+      } else {
+        process.stdout.write(formatSearch(result, allCandidates.length));
+      }
+      return 0;
+    }
+
     case 'walkforward': {
       const candles = await loadData();
       const factory = getStrategy(values.strategy as string);
@@ -447,6 +473,26 @@ function round(value: number): number {
 function emit(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 }
+
+/**
+ * Fine-grained grids for the `search` command -- deliberately much finer than
+ * each strategy's own `.grid` (which is coarse on purpose, for walk-forward's
+ * per-fold optimisation). These are sized to land near 10,000 real candidates
+ * for donchian-breakout specifically, since that is the strategy this
+ * feature exists to give an honest answer about.
+ */
+const FINE_GRIDS: Readonly<Record<string, Readonly<Record<string, readonly number[]>>>> = {
+  'donchian-breakout': {
+    entry: gridRange(10, 200, 5),
+    exit: gridRange(5, 100, 5),
+    atrStopMult: gridRange(1.5, 4.5, 0.25),
+  },
+  'ema-crossover': {
+    fast: gridRange(5, 60, 2),
+    slow: gridRange(20, 200, 5),
+    atrStopMult: gridRange(1.5, 4.5, 0.25),
+  },
+};
 
 /** Strategies whose signal depends on the sentiment side-channel. */
 const SENTIMENT_STRATEGIES = new Set(['donchian-sentiment']);

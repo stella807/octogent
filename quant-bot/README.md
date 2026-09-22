@@ -174,7 +174,7 @@ discovering it live.
 
 ```bash
 pnpm install
-pnpm test                 # 293 tests, no network needed
+pnpm test                 # 307 tests, no network needed
 pnpm build
 
 # Runs offline against seeded synthetic data
@@ -195,6 +195,7 @@ node --experimental-strip-types src/cli.ts compare \
 | `montecarlo` | How much of the result was the order the trades happened to arrive in |
 | `portfolio` | A multi-asset strategy against an equal-weight benchmark |
 | `blend` | Several strategies at once, each on its own slice of capital |
+| `search` | Thousands of parameter combinations, train vs. held-out test |
 | `paper` | Live market data, simulated fills, no real money |
 | `live` | Real orders. Two independent gates stand in front of it. |
 
@@ -552,6 +553,47 @@ curve-fitting rather than discovering something real, and the exact reason
 this repo runs walk-forward on every strategy rather than reporting the
 number that looks best.
 
+## "10,000 bots creating and testing strategies" — the honest version
+
+10,000 processes messaging each other doesn't test anything; it's theater.
+What the request is actually reaching for -- systematic search across a huge
+number of strategy variants -- is real, and `search` does it properly: split
+history ONCE into a training period and a genuinely held-out test period,
+run every candidate on both, and report the relationship between them across
+the whole population, not just whichever candidate happens to look best.
+
+That relationship is the actual answer to "does testing more strategies find
+more edge." Ran it for real, twice, on real BTC data:
+
+```bash
+node --experimental-strip-types src/cli.ts search --exchange coinbase \
+  --symbol BTC/USD --strategy donchian-breakout --candidates 10140
+```
+
+| strategy | candidates tested | train/test correlation | % with positive test Calmar |
+|---|---|---|---|
+| donchian-breakout | **7,670** | **0.453** (real, moderate) | 98.7% |
+| ema-crossover | **10,933** | **0.052** (~zero) | 100.0% |
+
+Two different, genuinely informative findings, not the same result twice:
+
+**donchian-breakout**: which parameters looked best on training data had a
+real (if imperfect) relationship to which ones did best afterward. Tuning
+this strategy's parameters is not pointless -- the correlation says so
+directly, for the first time all night with a number attached instead of a
+guess.
+
+**ema-crossover**: almost every parameter combination did fine out of sample
+(100% positive Calmar) -- the underlying idea works broadly on this data --
+but which specific combination looked best in training was statistically
+unrelated to which one did best afterward. Optimising this family's
+parameters buys nothing; picking reasonable defaults is exactly as good as
+running a 13,468-candidate search, because the search's ranking is noise.
+
+Neither finding says "more strategies tested equals more edge." Both say
+something more useful: whether search is worth doing at all depends on the
+strategy family, and now there's a number that says which.
+
 ## Strategies
 
 | strategy | shape | why it is here |
@@ -566,6 +608,8 @@ number that looks best.
 | `donchian-sentiment` | donchian-breakout, gated by Fear & Greed Index | Tested the sentiment hypothesis directly; it made returns worse, not better. |
 | `bxtrender-adx` | B-Xtrender direction, gated by ADX trend strength | From the viral indicator-checklist screenshot; fails walk-forward (efficiency 0.12). |
 | `master-consensus` | TSI + TDFI + McGinley Dynamic, all must agree | Best full-sample Calmar of any strategy here (1.20); worst walk-forward efficiency (0.04). |
+
+`search` is a command, not a strategy -- see above for what it tests.
 | `take-profit-scalp` | tiny target, distant or absent stop | **Not for trading.** The 99%-win-rate demo above. |
 
 Multi-asset strategies, for the `portfolio` command:
@@ -596,7 +640,7 @@ src/
   live/        Broker interface, paper broker, gated exchange broker, runner
   report.ts    Text reports, including the automatic reality checks
 docs/architecture.md   Diagrams of the pipeline, fill timing and kill switch
-test/          293 tests
+test/          307 tests
 ```
 
 ## What this is not
