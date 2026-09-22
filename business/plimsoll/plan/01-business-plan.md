@@ -34,7 +34,7 @@ the cohort comparison falls out.
 
 No instrumentation. No agent to install. No code leaving the building for the first report.
 
-This was verified before it was written down: the CLI in `business/product/plimsoll/` was
+This was verified before it was written down: the CLI in `business/plimsoll/product/plimsoll/` was
 built and run against this repository's real 57-commit history, and building it surfaced
 three methodology flaws — lockfile coupling, sweeping "fix lint" commits tarring unrelated
 changes, and small-sample thresholds — that a slide would never have caught.
@@ -104,7 +104,7 @@ machine output and fewer humans. See `03-offer-and-pricing.md`.
 
 ## 7. Financial plan
 
-From the runnable model in `business/model/` (`node business/model/run.mjs`):
+From the runnable model in `business/plimsoll/model/` (`node business/plimsoll/model/run.mjs`):
 
 **Base case**
 

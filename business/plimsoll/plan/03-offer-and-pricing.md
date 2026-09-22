@@ -70,7 +70,7 @@ ever billed a surprise.
 
 ## Blended economics
 
-From the operating model (`business/model/`):
+From the operating model (`business/plimsoll/model/`):
 
 - **Blended ARPU:** $699/mo (80% Team, 20% Growth)
 - **Gross margin on subscription:** ~98% ($12/customer/mo infrastructure)

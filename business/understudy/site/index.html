@@ -1,0 +1,473 @@
+<title>Understudy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bitter:wght@600;700&family=Cabin:wght@400;500;600&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #ECEDEA;
+    --surface: #F5F6F3;
+    --sunk: #DFE2DD;
+    --ink: #22282B;
+    --muted: #5E6A6E;
+    --rule: #CBD1CC;
+    --slate: #3D5A6C;
+    --slate-deep: #2E4757;
+    --brick: #A8532F;
+    --green: #40704A;
+    --on-slate: #F5F6F3;
+
+    --display: "Bitter", Georgia, "Times New Roman", serif;
+    --body: "Cabin", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: "Roboto Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+    --measure: 64ch;
+    --gutter: clamp(1rem, 5vw, 3.5rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #1A1F21;
+      --surface: #232A2D;
+      --sunk: #14181A;
+      --ink: #ECEDEA;
+      --muted: #96A3A7;
+      --rule: #374145;
+      --slate: #7FA3B8;
+      --slate-deep: #0F1618;
+      --brick: #D08258;
+      --green: #74AE7C;
+      --on-slate: #ECEDEA;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #1A1F21;
+    --surface: #232A2D;
+    --sunk: #14181A;
+    --ink: #ECEDEA;
+    --muted: #96A3A7;
+    --rule: #374145;
+    --slate: #7FA3B8;
+    --slate-deep: #0F1618;
+    --brick: #D08258;
+    --green: #74AE7C;
+    --on-slate: #ECEDEA;
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1060px; margin-inline: auto; padding-inline: var(--gutter); }
+
+  h1, h2, h3 { font-family: var(--display); margin: 0; line-height: 1.15; text-wrap: balance; }
+  p { margin: 0; }
+  a { color: var(--slate); }
+  :focus-visible { outline: 2px solid var(--brick); outline-offset: 3px; }
+
+  .eyebrow {
+    font-family: var(--body);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .masthead {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 1rem; padding-block: 1.5rem; border-bottom: 2px solid var(--ink);
+  }
+  .wordmark {
+    display: flex; align-items: center; gap: 0.55rem;
+    font-family: var(--display); font-weight: 700; font-size: 1.2rem;
+  }
+
+  /* ---- Hero ---- */
+  .hero { padding-block: clamp(2.5rem, 7vw, 5rem); }
+  .hero h1 { font-size: clamp(2.1rem, 5.4vw, 3.5rem); font-weight: 700; letter-spacing: -0.015em; max-width: 19ch; }
+  .lede { margin-top: 1.5rem; max-width: var(--measure); font-size: 1.1rem; color: var(--muted); }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  /* ---- The ruler: today vs transferable ---- */
+  .ruler { margin-top: 2.75rem; }
+  .ruler-track {
+    position: relative; height: 62px; background: var(--sunk);
+    border: 1px solid var(--rule); display: flex; align-items: stretch;
+  }
+  .ruler-now { width: 42.7%; background: var(--slate); }
+  .ruler-gain { flex: 1; background: repeating-linear-gradient(
+      135deg, transparent, transparent 7px, var(--green) 7px, var(--green) 9px); opacity: 0.85; }
+  .ruler-labels {
+    display: flex; justify-content: space-between; gap: 1rem;
+    margin-top: 0.7rem; font-family: var(--mono); font-size: 0.82rem;
+    font-variant-numeric: tabular-nums; flex-wrap: wrap;
+  }
+  .ruler-labels b { display: block; font-size: 1.05rem; font-weight: 500; }
+  .ruler-now-label { color: var(--slate); }
+  .ruler-gain-label { color: var(--green); text-align: right; }
+  .ruler-note { margin-top: 0.9rem; font-size: 0.87rem; color: var(--muted); max-width: var(--measure); }
+
+  .cta-row { display: flex; flex-wrap: wrap; gap: 0.7rem; margin-top: 2.25rem; }
+  .btn {
+    font-family: var(--body); font-weight: 600; font-size: 0.95rem;
+    text-decoration: none; padding: 0.72rem 1.3rem; border: 1px solid transparent;
+  }
+  .btn-primary { background: var(--slate); color: var(--on-slate); }
+  .btn-ghost { border-color: var(--rule); color: var(--ink); }
+
+  /* ---- Evidence ---- */
+  .evidence {
+    border-block: 1px solid var(--rule); padding-block: 2.4rem;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 2rem;
+  }
+  .stat .n {
+    font-family: var(--mono); font-weight: 500; font-variant-numeric: tabular-nums;
+    font-size: clamp(1.6rem, 4vw, 2.15rem); display: block; line-height: 1.1; color: var(--brick);
+  }
+  .stat p { font-size: 0.9rem; color: var(--muted); margin-top: 0.45rem; }
+  .stat cite { display: block; font-style: normal; font-family: var(--mono);
+    font-size: 0.72rem; color: var(--muted); opacity: 0.75; margin-top: 0.35rem; }
+
+  section { padding-block: clamp(2.75rem, 6vw, 4.5rem); }
+  .section-head { max-width: var(--measure); }
+  .section-head h2 { font-size: clamp(1.6rem, 3.4vw, 2.2rem); font-weight: 700; margin-top: 0.6rem; }
+  .section-head p { margin-top: 1rem; color: var(--muted); }
+
+  /* ---- Work order ---- */
+  .workorder { margin-top: 2rem; border: 1px solid var(--rule); background: var(--surface); }
+  .workorder-head {
+    padding: 1rem 1.25rem; border-bottom: 1px solid var(--rule);
+    display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: baseline;
+  }
+  .workorder-head strong { font-family: var(--display); font-size: 1.02rem; }
+  .workorder-head span { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
+  .table-scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; }
+  th, td { text-align: left; padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--rule); }
+  th {
+    font-family: var(--body); font-size: 0.7rem; font-weight: 600;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+  }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  td.num { color: var(--green); font-weight: 500; }
+  tbody tr:last-child td { border-bottom: none; }
+  .gap-name { font-weight: 600; }
+  .gap-target { display: block; font-size: 0.85rem; color: var(--muted); font-weight: 400; margin-top: 0.15rem; }
+  .effort { font-family: var(--mono); font-size: 0.85rem; color: var(--muted); letter-spacing: 0.1em; }
+  .workorder-foot {
+    padding: 1rem 1.25rem; background: var(--sunk);
+    font-family: var(--mono); font-size: 0.84rem; font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- Rungs ---- */
+  .rungs { margin-top: 2rem; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.25rem; }
+  .rung { border-top: 3px solid var(--rule); padding-top: 1rem; }
+  .rung.is-focus { border-top-color: var(--brick); }
+  .rung .price { font-family: var(--mono); font-size: 1.25rem; font-weight: 500; }
+  .rung .price small { font-size: 0.75rem; color: var(--muted); }
+  .rung h3 { font-size: 0.98rem; font-weight: 600; margin-block: 0.45rem 0.4rem; }
+  .rung p { font-size: 0.89rem; color: var(--muted); }
+
+  /* ---- Split blocks ---- */
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(1.5rem, 4vw, 3rem); }
+  .panel { background: var(--surface); border: 1px solid var(--rule); padding: clamp(1.5rem, 3vw, 2.25rem); }
+  .panel h3 { font-size: 1.15rem; font-weight: 700; margin-bottom: 0.9rem; }
+  .panel ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.7rem; }
+  .panel li { font-size: 0.94rem; color: var(--muted); padding-left: 1.3rem; position: relative; }
+  .panel li::before {
+    content: ""; position: absolute; left: 0; top: 0.6em;
+    width: 0.75rem; height: 2px; background: var(--slate);
+  }
+  .panel.is-refusal li::before { background: var(--brick); }
+
+  .channel { background: var(--slate-deep); color: var(--on-slate); }
+  .channel .wrap { padding-block: clamp(2.5rem, 6vw, 4rem); }
+  .channel h2 { font-size: clamp(1.5rem, 3.2vw, 2.1rem); font-weight: 700; max-width: 22ch; }
+  .channel p { color: #C3CFD4; margin-top: 1rem; max-width: var(--measure); }
+  .channel .eyebrow { color: #93AAB6; }
+
+  .limits { border: 1px solid var(--rule); padding: clamp(1.5rem, 3vw, 2.25rem); }
+  .limits ul { margin: 1.1rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.8rem; max-width: var(--measure); }
+  .limits li { font-size: 0.94rem; color: var(--muted); padding-left: 1.3rem; position: relative; }
+  .limits li::before { content: ""; position: absolute; left: 0; top: 0.6em; width: 0.75rem; height: 2px; background: var(--brick); }
+
+  footer {
+    border-top: 2px solid var(--ink); padding-block: 2rem 3rem;
+    display: flex; flex-wrap: wrap; gap: 0.75rem 2rem; justify-content: space-between;
+    align-items: baseline; font-size: 0.86rem; color: var(--muted);
+  }
+
+  @media (max-width: 900px) {
+    .rungs { grid-template-columns: repeat(2, 1fr); }
+    .evidence { grid-template-columns: repeat(2, 1fr); }
+    .split { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 480px) {
+    .rungs, .evidence { grid-template-columns: 1fr; gap: 1.5rem; }
+    .ruler-gain-label { text-align: left; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div class="wordmark">
+      <svg width="24" height="20" viewBox="0 0 28 22" aria-hidden="true">
+        <path d="M4 2 H10 M4 2 V20 M4 20 H10" fill="none" stroke="currentColor" stroke-width="2.5"></path>
+        <path d="M18 2 H24 M18 2 V20 M18 20 H24" fill="none" stroke="currentColor"
+              stroke-width="2.5" stroke-dasharray="3 3" opacity="0.65"></path>
+      </svg>
+      Understudy
+    </div>
+    <div class="eyebrow">Businesses that run without you</div>
+  </header>
+
+  <div class="hero">
+    <h1>Could your business run for two weeks without you?</h1>
+    <p class="lede">
+      If the answer is no, you do not own a business — you own a job you cannot quit, and
+      cannot sell. <strong>Owner-dependent businesses fetch 50–70% less, if they sell at
+      all.</strong> Understudy tells you what yours would fetch today, what each gap is
+      worth in dollars, and then does the work with you to close them.
+    </p>
+
+    <div class="ruler">
+      <div class="ruler-track" role="img"
+           aria-label="An example HVAC business worth $558,700 today, rising to $1,307,660 once its transferability gaps are closed.">
+        <div class="ruler-now"></div>
+        <div class="ruler-gain"></div>
+      </div>
+      <div class="ruler-labels">
+        <span class="ruler-now-label">Worth today<b>$558,700</b></span>
+        <span class="ruler-gain-label">Transferable<b>$1,307,660</b></span>
+      </div>
+      <p class="ruler-note">
+        A real appraisal of a representative $1.85M HVAC business. Same revenue, same crew,
+        same customers — the difference is entirely whether it can run without the owner.
+      </p>
+    </div>
+
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#workorder">See the work order</a>
+      <a class="btn btn-ghost" href="#accountants">For accountants</a>
+    </div>
+  </div>
+
+  <div class="evidence">
+    <div class="stat">
+      <span class="n">2.3M</span>
+      <p>US small businesses owned by people heading for retirement</p>
+      <cite>Project Equity</cite>
+    </div>
+    <div class="stat">
+      <span class="n">70–80%</span>
+      <p>Of businesses listed for sale never find a buyer</p>
+      <cite>Broker datasets, 2026</cite>
+    </div>
+    <div class="stat">
+      <span class="n">54%</span>
+      <p>Of owners have any succession plan at all</p>
+      <cite>2026 reporting</cite>
+    </div>
+    <div class="stat">
+      <span class="n">1 in 6</span>
+      <p>US jobs sit inside these businesses</p>
+      <cite>Project Equity</cite>
+    </div>
+  </div>
+
+  <section>
+    <div class="section-head">
+      <div class="eyebrow">Why most of them never sell</div>
+      <h2>It is almost never profitability. It is provability.</h2>
+      <p>
+        About 45% of deals die on financial issues and more than half collapse during due
+        diligence — not because the business does not make money, but because the owner
+        cannot prove it. Personal spending runs through the books. The process lives in one
+        person's head. The licences are in their own name. Every one of those is a discount,
+        and together they are usually disqualifying.
+      </p>
+      <p style="margin-top:1rem">
+        All of it is fixable, on a schedule, for money. That is the whole of what we do.
+      </p>
+    </div>
+  </section>
+
+  <section id="workorder">
+    <div class="section-head">
+      <div class="eyebrow">What you get</div>
+      <h2>Not a score out of a hundred. A work order with prices on it.</h2>
+      <p>
+        Every gap valued by what closing it adds to the business, ranked by what it returns
+        per month of effort — so you start with the one that pays best, not the one that is
+        easiest to talk about.
+      </p>
+    </div>
+
+    <div class="workorder">
+      <div class="workorder-head">
+        <strong>Ridgeline Heating &amp; Air</strong>
+        <span>$302,000 SDE · 1.85× today · $558,700</span>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Gap</th>
+              <th scope="col" class="num">Worth</th>
+              <th scope="col" class="num">Months</th>
+              <th scope="col">Effort</th>
+              <th scope="col" class="num">Per month</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="gap-name">Owner dependence</span>
+                <span class="gap-target">Out of daily delivery, relationships transferred, a second-in-command in place</span></td>
+              <td class="num">$135,900</td><td class="num">12</td>
+              <td class="effort">●●●</td><td class="num">$11,325</td>
+            </tr>
+            <tr>
+              <td><span class="gap-name">Documented operations</span>
+                <span class="gap-target">Written down well enough that a competent stranger could run it</span></td>
+              <td class="num">$54,360</td><td class="num">6</td>
+              <td class="effort">●○○</td><td class="num">$9,060</td>
+            </tr>
+            <tr>
+              <td><span class="gap-name">Provable financials</span>
+                <span class="gap-target">Two years of reviewed statements, no personal spending through the business</span></td>
+              <td class="num">$45,300</td><td class="num">6</td>
+              <td class="effort">●●○</td><td class="num">$7,550</td>
+            </tr>
+            <tr>
+              <td><span class="gap-name">Transferable rights</span>
+                <span class="gap-target">Licences held by the company, an assignable lease, contracts that survive a sale</span></td>
+              <td class="num">$51,340</td><td class="num">9</td>
+              <td class="effort">●●○</td><td class="num">$5,704</td>
+            </tr>
+            <tr>
+              <td><span class="gap-name">Recurring revenue</span>
+                <span class="gap-target">A quarter of revenue under contract or on a maintenance plan</span></td>
+              <td class="num">$33,220</td><td class="num">12</td>
+              <td class="effort">●●○</td><td class="num">$2,768</td>
+            </tr>
+            <tr>
+              <td><span class="gap-name">Team continuity</span>
+                <span class="gap-target">A second-in-command who stays, and a stable crew</span></td>
+              <td class="num">$18,120</td><td class="num">12</td>
+              <td class="effort">●●○</td><td class="num">$1,510</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="workorder-foot">
+        Close all of them → <strong>$1,307,660</strong> at 4.33× SDE. About twelve months of work.
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <div class="eyebrow">How it works</div>
+      <h2>Find out privately. Then decide.</h2>
+    </div>
+    <div class="rungs">
+      <div class="rung">
+        <div class="price">Free</div>
+        <h3>Scorecard</h3>
+        <p>Twenty questions, six minutes, no account. Find out on your own first.</p>
+      </div>
+      <div class="rung is-focus">
+        <div class="price">$1,200</div>
+        <h3>Readiness Report</h3>
+        <p>Your real numbers. What it would fetch, what each gap is worth, in what order.</p>
+      </div>
+      <div class="rung">
+        <div class="price">$1,250<small> /mo × 12</small></div>
+        <h3>Handover Program</h3>
+        <p>The work itself, with a coach, over a year. A defined end, not a retainer.</p>
+      </div>
+      <div class="rung">
+        <div class="price">$3,500</div>
+        <h3>Transfer File</h3>
+        <p>The diligence package a buyer's lender will ask for, assembled once.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="split">
+      <div class="panel is-refusal">
+        <h3>What we will not do</h3>
+        <ul>
+          <li>We do not broker the sale, list the business, or introduce buyers.</li>
+          <li>We take no commission, no success fee, and no share of any sale.</li>
+          <li>We are never on both sides of a transaction.</li>
+          <li>We do not promise a sale, or any price.</li>
+        </ul>
+        <p style="margin-top:1.1rem;font-size:0.92rem;color:var(--muted)">
+          Fixed fees for work delivered. Anyone paid on completion will never tell you
+          the business is not ready — and sometimes that is the honest answer.
+        </p>
+      </div>
+      <div class="panel">
+        <h3>What lands before any sale</h3>
+        <ul>
+          <li>You can take two weeks off without the phone ringing.</li>
+          <li>You can hire, because the job can finally be explained.</li>
+          <li>A bank can read your accounts without a translator.</li>
+          <li>If you never sell, you still stop working sixty-hour weeks.</li>
+        </ul>
+        <p style="margin-top:1.1rem;font-size:0.92rem;color:var(--muted)">
+          The sale price is the by-product. Most owners come for the holiday.
+        </p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="channel" id="accountants">
+  <div class="wrap">
+    <div class="eyebrow">For accountants and bookkeepers</div>
+    <h2>You already know which of your clients are retiring.</h2>
+    <p>
+      You see the books, you hear it at the year-end meeting, and you know that most of them
+      have no plan. You also know this is not work your practice is built to deliver — it is
+      twelve months of operational coaching, not compliance.
+    </p>
+    <p>
+      Send them to us and take 20% of everything they spend, paid on collection. No
+      exclusivity, cancel any time. We will run the first appraisal on one of your clients
+      free, so you can see exactly what your name is going on.
+    </p>
+  </div>
+</div>
+
+<div class="wrap">
+  <section>
+    <div class="limits">
+      <div class="eyebrow">Where this is weak</div>
+      <h2 style="font-size:clamp(1.3rem,2.8vw,1.75rem);margin-top:0.6rem">
+        Stated plainly, because you would find out anyway.
+      </h2>
+      <ul>
+        <li><strong>This is not a certified valuation.</strong> It estimates a likely sale range and reports a range, never a single number. It is not for tax, divorce, estate or litigation use.</li>
+        <li>It is only as good as the figures you give it. We do not audit anything.</li>
+        <li>Multiples move with geography, timing and buyer type in ways no general model catches. Check ours against recent sales in your trade.</li>
+        <li>Some businesses get no price from us at all. If the books are cash and commingled, no lender will finance a buyer, and we will tell you that instead of quoting a hopeful number.</li>
+        <li>The programme only works if you do the work between sessions. We cannot do it for you, and we will say so if it is not happening.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <div><strong style="font-family:var(--display);color:var(--ink)">Understudy</strong> — businesses that run without you</div>
+    <div>Find out privately. Fix what pays. Keep the choice.</div>
+  </footer>
+</div>

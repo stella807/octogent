@@ -1,0 +1,10 @@
+{
+  "name": "@understudy/appraise",
+  "version": "0.1.0",
+  "private": true,
+  "description": "What a main street business would fetch, and what each gap to sellability is worth",
+  "type": "module",
+  "bin": { "appraise": "./src/cli.mjs" },
+  "engines": { "node": ">=22.0.0" },
+  "scripts": { "test": "node --test 'test/*.test.mjs'" }
+}

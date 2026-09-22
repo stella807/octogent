@@ -1,0 +1,30 @@
+{
+  "name": "Ridgeline Heating & Air",
+  "industry": "home-services",
+  "yearsOperating": 22,
+  "note": "Illustrative example. Numbers are representative of a typical main street HVAC business, not a real company.",
+  "financials": {
+    "revenue": 1850000,
+    "netProfit": 118000,
+    "ownerSalary": 95000,
+    "ownerBenefits": 16000,
+    "discretionaryExpenses": 21000,
+    "oneTimeExpenses": 12000,
+    "interest": 9000,
+    "depreciation": 31000
+  },
+  "risk": {
+    "ownerHoursPerWeek": 58,
+    "ownerInDelivery": true,
+    "ownerHoldsKeyRelationships": true,
+    "secondInCommand": false,
+    "topCustomerSharePct": 0.12,
+    "recurringRevenuePct": 0.08,
+    "financialsQuality": "tax-returns-only",
+    "documentedProcesses": "none",
+    "staffTenureYears": 6,
+    "ownerHeldLicenses": true,
+    "leaseTransferable": true,
+    "customerContracts": false
+  }
+}

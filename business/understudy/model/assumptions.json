@@ -1,0 +1,38 @@
+{
+  "months": 24,
+  "currency": "USD",
+  "note": "Bottom-up, single-operator plan. Referral-led through accountants and bookkeepers. Delivery is capacity-constrained, so growth requires coaches, not servers.",
+  "channel": {
+    "partnersMonth1": 3,
+    "partnersAddedPerMonth": 2,
+    "partnerCeiling": 40,
+    "referralsPerPartnerPerMonth": 0.6,
+    "inboundScorecardsMonth1": 15,
+    "inboundGrowthRate": 0.12,
+    "inboundCeiling": 220,
+    "scorecardToReportRate": 0.09,
+    "reportToProgramRate": 0.3,
+    "programToTransferFileRate": 0.35
+  },
+  "pricing": {
+    "readinessReport": 1200,
+    "programMonthly": 1250,
+    "programLengthMonths": 12,
+    "transferFile": 3500,
+    "partnerCommissionRate": 0.2
+  },
+  "capacity": {
+    "concurrentProgramsPerCoach": 12,
+    "reportsPerMonthPerCoach": 6,
+    "coachHiredAtUtilisation": 0.8,
+    "maxCoaches": 4
+  },
+  "costs": {
+    "fixedMonthly": 600,
+    "coachMonthly": 7000,
+    "reportDeliveryCost": 90,
+    "founderDrawMonthly": 7000,
+    "founderDrawStartMonth": 7,
+    "formationOneOff": 1400
+  }
+}
