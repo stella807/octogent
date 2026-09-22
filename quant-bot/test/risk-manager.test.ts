@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_LIMITS, RiskManager, type RiskLimits } from '../src/risk/risk-manager.ts';
+import { CONSERVATIVE_LIMITS, DEFAULT_LIMITS, RiskManager, type RiskLimits } from '../src/risk/risk-manager.ts';
 
 const DAY = 86_400_000;
 const t = (day: number, hour = 0): number => Date.UTC(2024, 0, 1 + day) + hour * 3_600_000;
@@ -129,5 +129,19 @@ describe('time handling', () => {
     const later = risk.onBar(t(0, 23), 9_900);
     expect(later.dayStartEquity).toBe(first.dayStartEquity);
     expect(DAY).toBe(86_400_000);
+  });
+});
+
+describe('CONSERVATIVE_LIMITS', () => {
+  it('is tighter than the research default, and only on drawdown', () => {
+    expect(CONSERVATIVE_LIMITS.maxDrawdownPct).toBeLessThan(DEFAULT_LIMITS.maxDrawdownPct);
+    expect(CONSERVATIVE_LIMITS.maxDrawdownPct).toBe(15);
+    // Every other limit is inherited unchanged.
+    expect(CONSERVATIVE_LIMITS.riskPerTradePct).toBe(DEFAULT_LIMITS.riskPerTradePct);
+    expect(CONSERVATIVE_LIMITS.maxDailyLossPct).toBe(DEFAULT_LIMITS.maxDailyLossPct);
+  });
+
+  it('passes the same validation every other limit set does', () => {
+    expect(() => new RiskManager(10_000, CONSERVATIVE_LIMITS)).not.toThrow();
   });
 });

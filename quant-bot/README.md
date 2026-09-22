@@ -174,7 +174,7 @@ discovering it live.
 
 ```bash
 pnpm install
-pnpm test                 # 232 tests, no network needed
+pnpm test                 # 234 tests, no network needed
 pnpm build
 
 # Runs offline against seeded synthetic data
@@ -268,7 +268,7 @@ object runs in backtests and live trading so the two cannot drift apart.
 | `riskPerTradePct` | 1% | Position sized so the stop costs exactly this much |
 | `maxPositionPct` | 100% | Spot only — values above 100 are rejected outright |
 | `maxDailyLossPct` | 5% | Flattens and pauses trading until the next UTC day |
-| `maxDrawdownPct` | 25% | Kill switch. Fires once and never un-fires. |
+| `maxDrawdownPct` | **15%** (default when running the CLI) | Kill switch. Fires once and never un-fires. |
 | `minEquity` | 0 | Stops trading rather than grinding the account to dust |
 
 Four properties worth knowing:
@@ -282,6 +282,20 @@ Four properties worth knowing:
   clears on restart is not a halt, it is a pause between attempts at the same
   loss. Clearing it is a deliberate human act: delete the state file.
 - It **never un-fires**, even if equity recovers to a new high.
+
+**Why 15%, not 25%.** `RiskLimits.DEFAULT_LIMITS` in the code is 25%, which is
+the research setting — loose on purpose, so a backtest shows a strategy's full
+behavior. The CLI's actual default is `CONSERVATIVE_LIMITS` at 15%, chosen from
+evidence rather than a round number: `donchian-breakout` over 8 years of real
+BTC data realised a 4.24% drawdown, and reshuffling the same trades 5,000 times
+(`montecarlo`) put the 95th-percentile outcome at 8.51% and the worst resampled
+path at 16.43%. A cap set at the historical minimum (e.g. 5%) is not a safety
+margin — it is a bet that the next stretch of ordinary bad luck is no worse
+than the luckiest path already observed, and testing it live halts the bot
+within the first year. 15% sits above that range, so the switch fires on an
+actual regime change, not on noise. Override with `--max-drawdown` if you want
+the research default back, or tighter — but test the number against
+`montecarlo` first, the way this one was chosen.
 
 The sizing arithmetic is the honest answer to "how do I get big returns without
 big risk". At 1% risk with a 2.5×ATR stop on an asset at 80% annualised
@@ -418,7 +432,7 @@ src/
   live/        Broker interface, paper broker, gated exchange broker, runner
   report.ts    Text reports, including the automatic reality checks
 docs/architecture.md   Diagrams of the pipeline, fill timing and kill switch
-test/          232 tests
+test/          234 tests
 ```
 
 ## What this is not

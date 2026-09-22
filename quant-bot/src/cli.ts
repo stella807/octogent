@@ -10,7 +10,7 @@ import { loadCsv } from './data/csv.ts';
 import { fetchCandles } from './data/exchange.ts';
 import { barsForRange, clipToRange, parseRange, type DateRange } from './data/range.ts';
 import { generateCandles } from './data/synthetic.ts';
-import { BENCHMARK_LIMITS, DEFAULT_LIMITS, type RiskLimits } from './risk/risk-manager.ts';
+import { BENCHMARK_LIMITS, CONSERVATIVE_LIMITS, DEFAULT_LIMITS, type RiskLimits } from './risk/risk-manager.ts';
 import { formatBacktest, formatMonteCarlo, formatPortfolio, formatWalkForward } from './report.ts';
 import { buyAndHold, getStrategy, STRATEGIES } from './strategy/index.ts';
 import type { Params } from './strategy/types.ts';
@@ -48,7 +48,8 @@ Common
   --bars 1500            How much history to use
   --equity 10000         Starting equity in quote currency
   --risk 1               Percent of equity risked per trade
-  --max-drawdown 25      Percent drawdown that trips the kill switch
+  --max-drawdown 15      Percent drawdown that trips the kill switch
+                         (research default is 25; see docs/architecture.md)
   --max-daily-loss 5     Percent daily loss that pauses trading
   --fee-bps 10           Taker fee per side
   --slippage-bps 5       Slippage per side
@@ -76,7 +77,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       bars: { type: 'string', default: '1500' },
       equity: { type: 'string', default: '10000' },
       risk: { type: 'string', default: String(DEFAULT_LIMITS.riskPerTradePct) },
-      'max-drawdown': { type: 'string', default: String(DEFAULT_LIMITS.maxDrawdownPct) },
+      'max-drawdown': { type: 'string', default: String(CONSERVATIVE_LIMITS.maxDrawdownPct) },
       'max-daily-loss': { type: 'string', default: String(DEFAULT_LIMITS.maxDailyLossPct) },
       'max-position': { type: 'string', default: String(DEFAULT_LIMITS.maxPositionPct) },
       'fee-bps': { type: 'string', default: String(DEFAULT_COSTS.feeBps) },
