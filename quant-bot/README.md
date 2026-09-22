@@ -174,7 +174,7 @@ discovering it live.
 
 ```bash
 pnpm install
-pnpm test                 # 272 tests, no network needed
+pnpm test                 # 293 tests, no network needed
 pnpm build
 
 # Runs offline against seeded synthetic data
@@ -508,6 +508,50 @@ implementation's seeding step summed one extra DX value before averaging,
 inflating early readings above the mathematically-guaranteed 0-100 bound --
 caught by a test asserting that exact bound, not by eyeballing the numbers.
 
+## "Build a master strategy" — the clearest overfitting demonstration of the night
+
+Same checklist screenshot, a different mark this time: **True Strength
+Index**, **Trend Direction Force Index**, and **McGinley Dynamic** -- three
+genuinely different signal families (a momentum oscillator, a volume-weighted
+force index, an adaptive trend baseline), combined the way "master strategy"
+implies: trade only when all three agree on direction.
+
+Built to real published formulas (William Blau's TSI, Mladen's TDFI, John
+McGinley's 1990 adaptive average). Full-sample on real BTC data, this is the
+best-looking result of the entire night:
+
+| | full-sample return | max drawdown | **Calmar** | walk-forward OOS | walk-forward efficiency |
+|---|---|---|---|---|---|
+| master-consensus | +47.10% | 4.00% | **1.20** (best of every strategy tested) | +2.05% | **0.04** (worst or tied-worst) |
+
+Look at the in-sample return across the five walk-forward folds before
+seeing the out-of-sample number: **57.81%, 60.13%, 45.07%, 46.01%, 38.24%.**
+That consistency is itself the warning sign -- a real edge does not perform
+that uniformly well across five different multi-month windows of a market
+that includes both a boom and a full bear cycle. An over-fit one does,
+because each fold's parameters were chosen separately to fit that fold. Six
+free parameters across three indicator families gave the optimiser maximum
+room to do exactly that. Out-of-sample, the same strategy returns 2.05% and
+loses money in the 2021-2022 bear market (-3.34%, worse than the simpler
+donchian-breakout's -1.66%).
+
+**The pattern across every indicator-based strategy built tonight, in one
+line each:**
+
+| strategy | # signals combined | full-sample Calmar | walk-forward efficiency |
+|---|---|---|---|
+| donchian-breakout | 1 (price channel) | 0.72 | 0.65 |
+| bxtrender-adx | 2 | 0.67 | 0.12 |
+| donchian-sentiment | 2 | 0.50 | -0.04 |
+| master-consensus | 3 | **1.20** | **0.04** |
+
+More signals combined did not produce more edge. It produced a better-looking
+full-sample number and a worse-surviving one -- the exact shape "combine
+everything for a master strategy" predicts if the checklist approach is
+curve-fitting rather than discovering something real, and the exact reason
+this repo runs walk-forward on every strategy rather than reporting the
+number that looks best.
+
 ## Strategies
 
 | strategy | shape | why it is here |
@@ -521,6 +565,7 @@ caught by a test asserting that exact bound, not by eyeballing the numbers.
 | `bollinger-reversion` | Z-score mean reversion vs. rolling mean | Tested from a vendor claim; fails walk-forward (efficiency -0.16). |
 | `donchian-sentiment` | donchian-breakout, gated by Fear & Greed Index | Tested the sentiment hypothesis directly; it made returns worse, not better. |
 | `bxtrender-adx` | B-Xtrender direction, gated by ADX trend strength | From the viral indicator-checklist screenshot; fails walk-forward (efficiency 0.12). |
+| `master-consensus` | TSI + TDFI + McGinley Dynamic, all must agree | Best full-sample Calmar of any strategy here (1.20); worst walk-forward efficiency (0.04). |
 | `take-profit-scalp` | tiny target, distant or absent stop | **Not for trading.** The 99%-win-rate demo above. |
 
 Multi-asset strategies, for the `portfolio` command:
@@ -551,7 +596,7 @@ src/
   live/        Broker interface, paper broker, gated exchange broker, runner
   report.ts    Text reports, including the automatic reality checks
 docs/architecture.md   Diagrams of the pipeline, fill timing and kill switch
-test/          272 tests
+test/          293 tests
 ```
 
 ## What this is not

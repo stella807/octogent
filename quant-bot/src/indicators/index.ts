@@ -264,3 +264,89 @@ export function adx(candles: readonly Candle[], period = 14): {
   }
   return { adx: adxOut, plusDI: plusDIOut, minusDI: minusDIOut };
 }
+
+/**
+ * True Strength Index (William Blau, 1991): double-smoothed momentum.
+ * Price change is EMA-smoothed twice (long period then short period), same
+ * for its absolute value, and the ratio -- bounded to [-100, 100] because the
+ * denominator can never be smaller than the numerator's absolute value --
+ * reads as net directional momentum as a share of total movement.
+ */
+export function tsi(values: readonly number[], longPeriod = 25, shortPeriod = 13): Series {
+  assertPeriod(longPeriod);
+  assertPeriod(shortPeriod);
+  const change: number[] = new Array(values.length).fill(0);
+  for (let i = 1; i < values.length; i += 1) {
+    change[i] = (values[i] as number) - (values[i - 1] as number);
+  }
+  const smoothedChange = ema(ema(change, longPeriod).map((v) => v ?? 0), shortPeriod);
+  const smoothedAbsChange = ema(ema(change.map(Math.abs), longPeriod).map((v) => v ?? 0), shortPeriod);
+
+  return values.map((_, i) => {
+    const num = smoothedChange[i];
+    const den = smoothedAbsChange[i];
+    if (num === null || num === undefined || den === null || den === undefined) return null;
+    return den > 0 ? (100 * num) / den : 0;
+  });
+}
+
+/**
+ * Trend Direction Force Index (Mladen): (close - prevClose) * volume,
+ * normalized by ATR so the reading is comparable across assets and
+ * volatility regimes, then EMA-smoothed. Published variants add further
+ * min-max normalisation on top of this core formula; only the documented
+ * core is implemented here rather than guessing at an unconfirmed extra
+ * step -- consolidation still reads as values near zero either way, which
+ * is the property this repo's use of it depends on.
+ */
+export function tdfi(candles: readonly Candle[], atrPeriod = 14, smoothPeriod = 13): Series {
+  assertPeriod(atrPeriod);
+  assertPeriod(smoothPeriod);
+  const atrLine = atr(candles, atrPeriod);
+  const force: number[] = new Array(candles.length).fill(0);
+  for (let i = 1; i < candles.length; i += 1) {
+    const cur = candles[i] as Candle;
+    const prev = candles[i - 1] as Candle;
+    const atrValue = atrLine[i];
+    if (atrValue === null || atrValue === undefined || atrValue <= 0) continue;
+    force[i] = ((cur.close - prev.close) * cur.volume) / atrValue;
+  }
+  return ema(force, smoothPeriod).map((v, i) => (atrLine[i] === null || atrLine[i] === undefined ? null : v));
+}
+
+/**
+ * McGinley Dynamic (John McGinley, 1990): a moving average that adjusts its
+ * own speed to price, via a recursive formula that accelerates on strong
+ * moves and slows during consolidation -- aimed at the lag problem plain
+ * SMA/EMA lines have. Seeded from the SMA of the first `period` values, the
+ * same convention `ema` uses here, so it starts from a stable baseline
+ * rather than the first raw price.
+ */
+export function mcginleyDynamic(values: readonly number[], period = 14): Series {
+  assertPeriod(period);
+  const out: (number | null)[] = new Array(values.length).fill(null);
+  if (values.length < period) return out;
+
+  let seed = 0;
+  for (let i = 0; i < period; i += 1) seed += values[i] as number;
+  let md = seed / period;
+  out[period - 1] = md;
+
+  for (let i = period; i < values.length; i += 1) {
+    const price = values[i] as number;
+    if (md > 0) {
+      const ratio = price / md;
+      // A ratio of exactly 0 or a pathological spike raised to the 4th power
+      // can blow the denominator up or collapse it; guard rather than emit
+      // NaN/Infinity into a strategy that will trade on this value.
+      const denominator = period * ratio ** 4;
+      md = Number.isFinite(denominator) && denominator > 0
+        ? md + (price - md) / denominator
+        : price;
+    } else {
+      md = price;
+    }
+    out[i] = md;
+  }
+  return out;
+}
