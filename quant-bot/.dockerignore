@@ -1,0 +1,10 @@
+node_modules
+dist
+data
+.quant-bot
+test
+.git
+.env
+.env.*
+!.env.example
+*.md
