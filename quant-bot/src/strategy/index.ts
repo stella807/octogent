@@ -6,6 +6,7 @@ import { takeProfitScalp } from './take-profit-scalp.ts';
 import { volTarget } from './vol-target.ts';
 import { tsmom } from './tsmom.ts';
 import { bollingerReversion } from './bollinger-reversion.ts';
+import { donchianSentiment } from './donchian-sentiment.ts';
 import type { StrategyFactory } from './types.ts';
 
 export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
@@ -17,6 +18,7 @@ export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
   [volTarget.name]: volTarget,
   [tsmom.name]: tsmom,
   [bollingerReversion.name]: bollingerReversion,
+  [donchianSentiment.name]: donchianSentiment,
 };
 
 export function getStrategy(name: string): StrategyFactory {
@@ -38,5 +40,6 @@ export {
   volTarget,
   tsmom,
   bollingerReversion,
+  donchianSentiment,
 };
 export * from './types.ts';

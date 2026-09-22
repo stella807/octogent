@@ -1,5 +1,5 @@
 import type { Candle, EquityPoint, Trade } from '../domain/types.ts';
-import type { Params, StrategyFactory } from '../strategy/types.ts';
+import type { Params, StrategyContext, StrategyFactory } from '../strategy/types.ts';
 import { DEFAULT_CONFIG, runBacktest, type BacktestConfig, type BacktestResult } from './engine.ts';
 import { computeMetrics, type Metrics } from './metrics.ts';
 
@@ -18,6 +18,8 @@ import { computeMetrics, type Metrics } from './metrics.ts';
 export type Objective = 'calmar' | 'sharpe' | 'sortino' | 'return' | 'profitFactor';
 
 export interface WalkForwardOptions {
+  /** Aligned 1:1 with the full candle array; sliced alongside it per fold. */
+  readonly sentiment?: readonly (number | null)[];
   readonly folds: number;
   /** Fraction of each fold's history used for parameter selection. */
   readonly inSampleRatio: number;
@@ -71,6 +73,8 @@ export function walkForward(
   }
 
   const warmup = factory.create(candles, factory.defaults).warmup;
+  const sliceContext = (from: number, to: number): StrategyContext | undefined =>
+    options.sentiment ? { sentiment: options.sentiment.slice(from, to) } : undefined;
   const usable = candles.length - warmup;
   if (usable < foldCount * 20) {
     throw new RangeError(
@@ -117,7 +121,7 @@ export function walkForward(
     for (const params of grid) {
       let result: BacktestResult;
       try {
-        result = runBacktest(isSlice, factory.create(isSlice, params), config);
+        result = runBacktest(isSlice, factory.create(isSlice, params, sliceContext(isFrom, isTo)), config);
       } catch {
         continue; // invalid parameter combination (e.g. fast >= slow)
       }
@@ -127,7 +131,12 @@ export function walkForward(
     if (best === null) continue;
 
     const oosConfig: BacktestConfig = { ...config, startingEquity: equity };
-    const oosResult = runBacktest(oosSlice, factory.create(oosSlice, best.params), oosConfig);
+    const oosSliceFrom = Math.max(0, oosFrom - warmup);
+    const oosResult = runBacktest(
+      oosSlice,
+      factory.create(oosSlice, best.params, sliceContext(oosSliceFrom, oosSliceFrom + oosSlice.length)),
+      oosConfig,
+    );
     const oosMetrics = computeMetrics(oosResult);
     const isMetrics = computeMetrics(best.result);
 

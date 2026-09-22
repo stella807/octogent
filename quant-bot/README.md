@@ -174,7 +174,7 @@ discovering it live.
 
 ```bash
 pnpm install
-pnpm test                 # 234 tests, no network needed
+pnpm test                 # 246 tests, no network needed
 pnpm build
 
 # Runs offline against seeded synthetic data
@@ -391,6 +391,41 @@ numbers are worth anything. Two more ideas were tested and rejected by the same
 bar everything else here is held to, which is the point of building the bar
 first.
 
+## Sentiment tracking — built, tested, and it made things worse
+
+Real request: track sentiment and use it. Built it properly rather than
+arguing about it — `donchian-sentiment` reads the public crypto Fear & Greed
+Index (alternative.me, daily since 2018) and refuses a new breakout entry
+when yesterday's reading was in "extreme greed" territory, on the theory that
+a breakout during broad euphoria is more likely a blow-off top than a real
+trend start. The reading is lagged a full day specifically so the strategy
+can never act on a sentiment value published after the bar it's trading on —
+the same causality rule as every price-based indicator here, extended to a
+new kind of input.
+
+Tested it exactly like everything else, full sample and walk-forward, against
+the `donchian-breakout` it's built on top of:
+
+| | full-sample return | Calmar | walk-forward OOS |
+|---|---|---|---|
+| donchian-breakout (no filter) | +28.12% | 0.72 | +2.20% |
+| donchian-sentiment (greed-gated) | **+22.91%** | **0.50** | **-0.81%** |
+
+The filter didn't help. It hurt, on both counts — worse full-sample return,
+worse risk-adjusted return, and out-of-sample it loses money where the
+ungated version made a small amount. Skipping "greedy" breakouts filtered out
+profitable trades along with whatever it was supposed to avoid; the intuition
+that euphoria precedes tops didn't survive contact with the data at this
+threshold and lag. This is one specific, honest implementation of the idea —
+a different threshold or a shorter lag might do better — but it is not
+currently something this repo recommends trading, and the code and the
+negative result are both in the tree rather than only the code.
+
+The other half of "sub-agents that research" — the automated literature scan
+for new strategies — is the section above and the walk-forward tooling
+underneath it. It is not a separate system; it is this same process, run
+again.
+
 ## Strategies
 
 | strategy | shape | why it is here |
@@ -402,6 +437,7 @@ first.
 | `vol-target` | exposure inverse to realised volatility | 25% win rate, 8:1 payoff. What actually works. |
 | `tsmom` | textbook time-series momentum | Tested from literature; fails walk-forward (efficiency 0.29). |
 | `bollinger-reversion` | Z-score mean reversion vs. rolling mean | Tested from a vendor claim; fails walk-forward (efficiency -0.16). |
+| `donchian-sentiment` | donchian-breakout, gated by Fear & Greed Index | Tested the sentiment hypothesis directly; it made returns worse, not better. |
 | `take-profit-scalp` | tiny target, distant or absent stop | **Not for trading.** The 99%-win-rate demo above. |
 
 Multi-asset strategies, for the `portfolio` command:
@@ -432,7 +468,7 @@ src/
   live/        Broker interface, paper broker, gated exchange broker, runner
   report.ts    Text reports, including the automatic reality checks
 docs/architecture.md   Diagrams of the pipeline, fill timing and kill switch
-test/          234 tests
+test/          246 tests
 ```
 
 ## What this is not

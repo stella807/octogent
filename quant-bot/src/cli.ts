@@ -18,6 +18,8 @@ import { PaperBroker } from './live/paper-broker.ts';
 import { ExchangeBroker, LIVE_CONFIRM_ENV, LIVE_CONFIRM_VALUE } from './live/exchange-broker.ts';
 import { LiveRunner } from './live/runner.ts';
 import { alignCandles, alignmentCoverage } from './portfolio/align.ts';
+import { alignSentiment, fetchSentiment } from './data/sentiment.ts';
+import type { StrategyContext } from './strategy/types.ts';
 import { runPortfolioBacktest } from './portfolio/engine.ts';
 import { equalWeight, getPortfolioStrategy, PORTFOLIO_STRATEGIES } from './portfolio/index.ts';
 
@@ -140,7 +142,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       const candles = await loadData();
       const factory = getStrategy(values.strategy as string);
       const params = { ...factory.defaults, ...overrides };
-      const result = runBacktest(candles, factory.create(candles, params), config);
+      const context = await loadContext(factory.name, candles);
+      const result = runBacktest(candles, factory.create(candles, params, context), config);
       const bench = runBacktest(candles, buyAndHold.create(candles, {}), benchmarkConfig(config));
       if (values.json) {
         emit({ metrics: computeMetrics(result), benchmark: computeMetrics(bench), trades: result.trades });
@@ -155,7 +158,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       const rows: Record<string, unknown>[] = [];
       for (const factory of Object.values(STRATEGIES)) {
         const runConfig = factory.name === buyAndHold.name ? benchmarkConfig(config) : config;
-        const result = runBacktest(candles, factory.create(candles, factory.defaults), runConfig);
+        const context = await loadContext(factory.name, candles);
+        const result = runBacktest(candles, factory.create(candles, factory.defaults, context), runConfig);
         const m = computeMetrics(result);
         rows.push({
           strategy: factory.name,
@@ -228,11 +232,13 @@ export async function main(argv: readonly string[]): Promise<number> {
     case 'walkforward': {
       const candles = await loadData();
       const factory = getStrategy(values.strategy as string);
+      const context = await loadContext(factory.name, candles);
       const result = walkForward(candles, factory, {
         ...DEFAULT_WF_OPTIONS,
         folds: Math.trunc(num(values.folds, 'folds')),
         objective: values.objective as Objective,
         config,
+        ...(context?.sentiment ? { sentiment: context.sentiment } : {}),
       });
       if (values.json) emit(result);
       else process.stdout.write(`${formatWalkForward(result)}\n`);
@@ -243,7 +249,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       const candles = await loadData();
       const factory = getStrategy(values.strategy as string);
       const params = { ...factory.defaults, ...overrides };
-      const result = runBacktest(candles, factory.create(candles, params), config);
+      const context = await loadContext(factory.name, candles);
+      const result = runBacktest(candles, factory.create(candles, params, context), config);
       if (result.trades.length < 2) {
         process.stderr.write('Not enough trades to resample. Use more history or a faster strategy.\n');
         return 1;
@@ -380,6 +387,18 @@ function round(value: number): number {
 
 function emit(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+}
+
+/** Strategies whose signal depends on the sentiment side-channel. */
+const SENTIMENT_STRATEGIES = new Set(['donchian-sentiment']);
+
+async function loadContext(
+  strategyName: string,
+  candles: readonly Candle[],
+): Promise<StrategyContext | undefined> {
+  if (!SENTIMENT_STRATEGIES.has(strategyName)) return undefined;
+  const sentiment = await fetchSentiment();
+  return { sentiment: alignSentiment(candles, sentiment) };
 }
 
 const isEntry = process.argv[1] !== undefined
