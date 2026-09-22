@@ -1,0 +1,560 @@
+<title>Plimsoll</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+  :root {
+    --ground: #E7ECEE;
+    --surface: #F4F7F8;
+    --sunk: #DCE3E6;
+    --ink: #0D1B26;
+    --ink-soft: #40566620;
+    --muted: #5B7385;
+    --rule: #C3CFD5;
+    --teal: #1F7D75;
+    --teal-bright: #3FA79E;
+    --amber: #B06D18;
+    --hull: #0D1B26;
+    --on-hull: #E7ECEE;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Source Sans 3", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+    --measure: 66ch;
+    --gutter: clamp(1rem, 5vw, 4rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0A151D;
+      --surface: #11212C;
+      --sunk: #071016;
+      --ink: #E7ECEE;
+      --ink-soft: #E7ECEE18;
+      --muted: #8EA5B3;
+      --rule: #233947;
+      --teal: #4FBDB3;
+      --teal-bright: #6FD6CC;
+      --amber: #E0A052;
+      --hull: #071016;
+      --on-hull: #E7ECEE;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0A151D;
+    --surface: #11212C;
+    --sunk: #071016;
+    --ink: #E7ECEE;
+    --ink-soft: #E7ECEE18;
+    --muted: #8EA5B3;
+    --rule: #233947;
+    --teal: #4FBDB3;
+    --teal-bright: #6FD6CC;
+    --amber: #E0A052;
+    --hull: #071016;
+    --on-hull: #E7ECEE;
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1080px;
+    margin-inline: auto;
+    padding-inline: var(--gutter);
+  }
+
+  h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.08; }
+  p { margin: 0; }
+  a { color: var(--teal); }
+  :focus-visible { outline: 2px solid var(--teal-bright); outline-offset: 3px; border-radius: 2px; }
+
+  .eyebrow {
+    font-family: var(--display);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ---- Masthead ---- */
+  .masthead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-block: 1.5rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .wordmark {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-family: var(--display);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    font-size: 1.15rem;
+  }
+
+  /* ---- Hero ---- */
+  .hero {
+    display: grid;
+    grid-template-columns: 1.25fr 0.75fr;
+    gap: clamp(2rem, 5vw, 4rem);
+    align-items: center;
+    padding-block: clamp(3rem, 8vw, 6rem);
+  }
+  .hero h1 {
+    font-size: clamp(2.4rem, 6.5vw, 4.1rem);
+    font-weight: 800;
+    letter-spacing: -0.035em;
+  }
+  .hero h1 em { font-style: normal; color: var(--teal); }
+  .lede {
+    margin-top: 1.4rem;
+    max-width: var(--measure);
+    font-size: 1.12rem;
+    color: var(--muted);
+  }
+
+  .disc-figure { display: flex; flex-direction: column; align-items: center; gap: 0.9rem; }
+  .disc-caption {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.45;
+  }
+
+  .cta-row { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 2rem; align-items: center; }
+  .btn {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 0.93rem;
+    text-decoration: none;
+    padding: 0.7rem 1.25rem;
+    border: 1px solid transparent;
+  }
+  .btn-primary { background: var(--teal); color: var(--ground); }
+  .btn-ghost { border-color: var(--rule); color: var(--ink); }
+
+  .install {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    background: var(--sunk);
+    border: 1px solid var(--rule);
+    padding: 0.7rem 1rem;
+    color: var(--ink);
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .install::before { content: "$ "; color: var(--muted); }
+
+  /* ---- Evidence strip ---- */
+  .evidence {
+    border-block: 1px solid var(--rule);
+    padding-block: 2.5rem;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 2rem;
+  }
+  .stat .n {
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: clamp(1.7rem, 4vw, 2.3rem);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.03em;
+    display: block;
+    line-height: 1.1;
+  }
+  .stat p { font-size: 0.9rem; color: var(--muted); margin-top: 0.45rem; }
+  .stat cite { display: block; font-style: normal; font-size: 0.74rem; color: var(--muted); opacity: 0.75; margin-top: 0.35rem; font-family: var(--mono); }
+
+  /* ---- Sections ---- */
+  section { padding-block: clamp(3rem, 7vw, 5.5rem); }
+  .section-head { max-width: var(--measure); }
+  .section-head h2 {
+    font-size: clamp(1.7rem, 3.6vw, 2.4rem);
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    margin-top: 0.7rem;
+  }
+  .section-head p { margin-top: 1rem; color: var(--muted); }
+
+  /* ---- Terminal ---- */
+  .terminal {
+    margin-top: 2.2rem;
+    background: var(--hull);
+    color: var(--on-hull);
+    border: 1px solid var(--rule);
+    overflow-x: auto;
+  }
+  .terminal-bar {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid #ffffff1a;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: #8EA5B3;
+  }
+  .terminal pre {
+    margin: 0;
+    padding: 1.2rem;
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    line-height: 1.55;
+    white-space: pre;
+  }
+  .terminal .fill { color: var(--teal-bright); }
+  .terminal .dim { color: #64808F; }
+
+  /* ---- Method: the draft-scale list ---- */
+  .marks { margin-top: 2.4rem; display: grid; gap: 0; }
+  .mark {
+    display: grid;
+    grid-template-columns: 4.5rem 1fr;
+    gap: clamp(1rem, 3vw, 2.5rem);
+    padding-block: 1.6rem;
+    border-top: 1px solid var(--rule);
+    align-items: start;
+  }
+  .mark:last-child { border-bottom: 1px solid var(--rule); }
+  .mark-tag {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--teal);
+    letter-spacing: 0.08em;
+    padding-top: 0.15rem;
+  }
+  .mark h3 { font-size: 1.08rem; font-weight: 700; }
+  .mark p { margin-top: 0.5rem; color: var(--muted); font-size: 0.97rem; max-width: var(--measure); }
+
+  /* ---- Ladder (offer) ---- */
+  .ladder { margin-top: 2.4rem; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
+  .rung { display: flex; flex-direction: column; border-top: 3px solid var(--rule); padding-top: 1.2rem; }
+  .rung.is-focus { border-top-color: var(--teal); }
+  .rung .price {
+    font-family: var(--mono);
+    font-size: 1.5rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+  .rung .price small { font-size: 0.8rem; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+  .rung h3 { font-size: 1rem; font-weight: 700; margin-bottom: 0.5rem; }
+  .rung ul { margin: 1rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.5rem; }
+  .rung li { font-size: 0.92rem; color: var(--muted); padding-left: 1.1rem; position: relative; }
+  .rung li::before { content: "—"; position: absolute; left: 0; color: var(--teal); }
+
+  /* ---- Limits ---- */
+  .limits { background: var(--surface); border: 1px solid var(--rule); }
+  .limits-inner { padding: clamp(1.75rem, 4vw, 2.75rem); }
+  .limits ul { margin: 1.4rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.9rem; max-width: var(--measure); }
+  .limits li { font-size: 0.97rem; color: var(--muted); padding-left: 1.4rem; position: relative; }
+  .limits li::before {
+    content: "";
+    position: absolute; left: 0; top: 0.62em;
+    width: 0.7rem; height: 1px; background: var(--amber);
+  }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-block: 2.5rem 3.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 2rem;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; }
+    .disc-figure { order: -1; }
+    .evidence { grid-template-columns: repeat(2, 1fr); }
+    .ladder { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 460px) {
+    .evidence { grid-template-columns: 1fr; gap: 1.6rem; }
+    .mark { grid-template-columns: 1fr; gap: 0.4rem; }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .waterline-group { animation: settle 1.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+    @keyframes settle {
+      from { transform: translateY(14px); opacity: 0.4; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+  }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div class="wordmark">
+      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"></circle>
+        <line x1="1.5" y1="12" x2="22.5" y2="12" stroke="currentColor" stroke-width="2"></line>
+      </svg>
+      Plimsoll
+    </div>
+    <div class="eyebrow">Load line for agent-written code</div>
+  </header>
+
+  <div class="hero">
+    <div>
+      <h1>You cannot set a safe limit on <em>agent-written code</em> if you cannot see how much you are carrying.</h1>
+      <p class="lede">
+        Plimsoll reads your git history and tells you what share of your merged code an
+        AI agent wrote — and whether that code fails more often than the code your
+        people write. It runs locally. Nothing leaves your machine.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#method">See how it works</a>
+        <a class="btn btn-ghost" href="#offer">Book a load line audit</a>
+      </div>
+      <p class="install" style="margin-top:1.25rem">npx @plimsoll/report --since "12 months ago"</p>
+    </div>
+
+    <figure class="disc-figure" style="margin:0">
+      <svg width="200" height="200" viewBox="0 0 200 200" role="img"
+           aria-label="A Plimsoll load line disc with the waterline at 42 percent, the share of committed code now written by AI.">
+        <defs>
+          <clipPath id="discClip"><circle cx="100" cy="100" r="62"></circle></clipPath>
+        </defs>
+        <circle cx="100" cy="100" r="62" fill="var(--surface)" stroke="var(--ink)" stroke-width="3"></circle>
+        <g class="waterline-group" clip-path="url(#discClip)">
+          <rect x="38" y="116" width="124" height="70" fill="var(--teal)" opacity="0.22"></rect>
+          <rect x="38" y="116" width="124" height="2.5" fill="var(--teal)"></rect>
+        </g>
+        <line x1="14" y1="100" x2="186" y2="100" stroke="var(--ink)" stroke-width="3"></line>
+        <!-- Hull draft gradations, as they appear beside a real load line marking. -->
+        <g stroke="var(--muted)" stroke-width="2">
+          <line x1="170" y1="62" x2="186" y2="62"></line>
+          <line x1="170" y1="81" x2="186" y2="81"></line>
+          <line x1="170" y1="119" x2="186" y2="119"></line>
+          <line x1="170" y1="138" x2="186" y2="138"></line>
+        </g>
+        <g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="end">
+          <text x="166" y="65">TF</text>
+          <text x="166" y="84">F</text>
+          <text x="166" y="122">S</text>
+          <text x="166" y="141">W</text>
+        </g>
+        <text x="100" y="96" text-anchor="middle" fill="var(--ink)"
+              font-family="IBM Plex Mono, monospace" font-size="22" font-weight="600">42%</text>
+      </svg>
+      <figcaption class="disc-caption">
+        Industry average share of committed<br>code now written by AI.<br>
+        <span style="opacity:0.7">Yours is almost certainly different.</span>
+      </figcaption>
+    </figure>
+  </div>
+
+  <div class="evidence">
+    <div class="stat">
+      <span class="n">+23.5%</span>
+      <p>Incidents per pull request, year over year</p>
+      <cite>Cortex, 2026 Benchmark</cite>
+    </div>
+    <div class="stat">
+      <span class="n">1.7&times;</span>
+      <p>Issues found in AI co-authored pull requests</p>
+      <cite>CodeRabbit</cite>
+    </div>
+    <div class="stat">
+      <span class="n">56%</span>
+      <p>Of AI code generation tasks pass a security check</p>
+      <cite>Veracode, 2026</cite>
+    </div>
+    <div class="stat">
+      <span class="n">96%</span>
+      <p>Of developers do not fully trust AI-generated code</p>
+      <cite>Sonar, 2026</cite>
+    </div>
+  </div>
+
+  <section>
+    <div class="section-head">
+      <div class="eyebrow">The problem with those numbers</div>
+      <h2>Every one of them is somebody else's average.</h2>
+      <p>
+        They tell you the category is riskier. They cannot tell you whether
+        <em>your</em> agent-written code is failing more than your human-written code,
+        which service it concentrates in, or whether last quarter's review policy
+        actually moved it. No engineering leader can currently answer that. The data
+        to answer it is already sitting in your git history.
+      </p>
+    </div>
+
+    <div class="terminal" id="method">
+      <div class="terminal-bar">plimsoll — run against a real repository</div>
+<pre>  PLIMSOLL  octogent
+  2026-04-08 → 2026-09-21   57 commits, 79069 lines changed
+
+  LOAD LINE — share of changed lines written with an agent
+  <span class="fill">███</span><span class="dim">·····························</span>  10.0%
+  agents seen: claude (7)
+
+  COHORTS
+           commits    lines   scored  revert  rework  failure
+  agent          7     7907        7    0.0%    0.0%     0.0%
+  human         50    71162       46    0.0%   21.7%    21.7%
+
+  RISK RATIO   0×   <span class="fill">LOW CONFIDENCE</span>
+  <span class="dim">fewer than 30 commits in a cohort; treat as directional</span></pre>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <div class="eyebrow">Method</div>
+      <h2>Attribution you already have, measured honestly.</h2>
+      <p>
+        Every agentic coding tool stamps a <code>Co-Authored-By</code> trailer by default,
+        and git trailers survive rebase. Provenance is already recorded in history you
+        already own — which is why the first report needs no instrumentation and no
+        access to your code.
+      </p>
+    </div>
+
+    <div class="marks">
+      <div class="mark">
+        <div class="mark-tag">TF</div>
+        <div>
+          <h3>Attribution anchored on identity, never a keyword</h3>
+          <p>
+            Trailers are parsed with git's own rule — the final paragraph only, and only
+            when every line in it is trailer-shaped — then matched against known vendor
+            identities. An engineer named Claudia is never scored as a machine. One false
+            positive discredits the whole report with the team being measured.
+          </p>
+        </div>
+      </div>
+      <div class="mark">
+        <div class="mark-tag">F</div>
+        <div>
+          <h3>Remediation does not count as risk</h3>
+          <p>
+            A fix is the response to a failure, not a new unit of one. Scoring fixes as
+            subjects flatters whichever cohort happens to do the cleanup, so they are
+            excluded from the denominator.
+          </p>
+        </div>
+      </div>
+      <div class="mark">
+        <div class="mark-tag">S</div>
+        <div>
+          <h3>High-traffic files cannot link two changes</h3>
+          <p>
+            A lockfile touched by every commit carries no signal about whether any one
+            change failed. Lockfiles, and any file touched by more than a quarter of
+            commits, are excluded from overlap matching.
+          </p>
+        </div>
+      </div>
+      <div class="mark">
+        <div class="mark-tag">W</div>
+        <div>
+          <h3>A sweeping fix cannot convict</h3>
+          <p>
+            <code>fix lint</code> across four hundred files is maintenance, not the
+            remediation of any single change. On our own test repository this one rule
+            moved the measured rework rate from 71.7% to 21.7% — the difference between
+            a fabricated alarm and a usable number.
+          </p>
+        </div>
+      </div>
+      <div class="mark">
+        <div class="mark-tag">WNA</div>
+        <div>
+          <h3>It says when it does not know</h3>
+          <p>
+            Below thirty scored commits in either cohort, the report prints
+            <code>LOW CONFIDENCE</code> instead of a ratio. A number that overstates its
+            own certainty is worse than no number, in a product whose only real asset is
+            being believed.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="offer">
+    <div class="section-head">
+      <div class="eyebrow">What you can buy</div>
+      <h2>Start with the measurement. Buy the rest only if it moves.</h2>
+    </div>
+
+    <div class="ladder">
+      <div class="rung">
+        <div class="price">Free<small> &nbsp;open source</small></div>
+        <h3>Load Line Report</h3>
+        <ul>
+          <li>Runs locally against git history</li>
+          <li>Agent share, cohort failure rates, risk ratio</li>
+          <li>Nothing transmitted, no account</li>
+          <li>Published methodology you can check</li>
+        </ul>
+      </div>
+      <div class="rung is-focus">
+        <div class="price">$7,500<small> &nbsp;fixed</small></div>
+        <h3>Load Line Audit</h3>
+        <ul>
+          <li>Two weeks, joined to your CI and incident data</li>
+          <li>Breakdown by service, team and code path</li>
+          <li>Merge policy delivered as a pull request</li>
+          <li>Re-measured at sixty days</li>
+        </ul>
+      </div>
+      <div class="rung">
+        <div class="price">$499<small> &nbsp;/month</small></div>
+        <h3>Plimsoll Cloud</h3>
+        <ul>
+          <li>Continuous load line across every repo</li>
+          <li>Weekly digest and threshold alerts</li>
+          <li>Merge-time gates on high-risk paths</li>
+          <li>Metadata only — never your source</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="limits">
+      <div class="limits-inner">
+        <div class="eyebrow">Where this is weak</div>
+        <h2 style="font-size:clamp(1.4rem,3vw,1.9rem);margin-top:0.7rem;font-weight:700">
+          Stated up front, because you would find out anyway.
+        </h2>
+        <ul>
+          <li>Revert-or-rework is a <strong>proxy</strong> for change failure rate, not a measurement of it. Join your own incident data before running policy off the number.</li>
+          <li>Commits without trailers count as human-authored, so the load line is a <strong>floor</strong>, not an estimate.</li>
+          <li>Squash-merge workflows collapse many changes into one commit and coarsen the analysis.</li>
+          <li>We never report on named individuals. Cohorts are machine versus human — never person versus person, and not as a configurable setting.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div>
+      <strong style="font-family:var(--display);color:var(--ink)">Plimsoll</strong>
+      &nbsp;— the load line for agent-written code
+    </div>
+    <div>Measure first. Gate second. Argue with the number, not about it.</div>
+  </footer>
+</div>

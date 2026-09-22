@@ -1,0 +1,38 @@
+{
+  "months": 24,
+  "currency": "USD",
+  "note": "Bottom-up, single-operator plan. Services fund the product; no outside capital assumed.",
+  "funnel": {
+    "reportRunsMonth1": 40,
+    "reportRunsGrowthRate": 0.18,
+    "reportRunsCeiling": 900,
+    "reportToAuditRate": 0.012,
+    "reportToTrialRate": 0.03,
+    "trialToPaidRate": 0.25,
+    "auditToSubscriptionRate": 0.5
+  },
+  "pricing": {
+    "auditPrice": 7500,
+    "teamPlanMonthly": 499,
+    "growthPlanMonthly": 1500,
+    "growthPlanMix": 0.2
+  },
+  "delivery": {
+    "auditCapacityPerMonth": 2,
+    "auditCapacityWithContractor": 4,
+    "contractorStartMonth": 10,
+    "productBuildMonths": 3
+  },
+  "retention": {
+    "monthlyLogoChurn": 0.03
+  },
+  "costs": {
+    "fixedMonthly": 450,
+    "contractorMonthly": 6000,
+    "infraPerCustomerMonthly": 12,
+    "auditDeliveryCost": 400,
+    "formationOneOff": 1200,
+    "founderDrawMonthly": 8000,
+    "founderDrawStartMonth": 7
+  }
+}
