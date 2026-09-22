@@ -181,3 +181,86 @@ export function barsPerYear(candles: readonly Candle[]): number {
   const median = gaps[Math.floor(gaps.length / 2)] ?? 86_400_000;
   return median > 0 ? (365 * 86_400_000) / median : 365;
 }
+
+/**
+ * Wilder's Average Directional Index, alongside +DI/-DI. ADX measures trend
+ * STRENGTH (how directional the market is), not direction — a market can
+ * have a strong ADX reading while falling just as easily as while rising.
+ * This is the textbook method for the "is this a trend or a chop" question,
+ * predating any of the community range-detection scripts by decades.
+ */
+export function adx(candles: readonly Candle[], period = 14): {
+  readonly adx: Series;
+  readonly plusDI: Series;
+  readonly minusDI: Series;
+} {
+  assertPeriod(period);
+  const n = candles.length;
+  const adxOut: (number | null)[] = new Array(n).fill(null);
+  const plusDIOut: (number | null)[] = new Array(n).fill(null);
+  const minusDIOut: (number | null)[] = new Array(n).fill(null);
+  if (n <= period * 2) return { adx: adxOut, plusDI: plusDIOut, minusDI: minusDIOut };
+
+  const tr: number[] = new Array(n).fill(0);
+  const plusDM: number[] = new Array(n).fill(0);
+  const minusDM: number[] = new Array(n).fill(0);
+  for (let i = 1; i < n; i += 1) {
+    const cur = candles[i] as Candle;
+    const prev = candles[i - 1] as Candle;
+    tr[i] = Math.max(cur.high - cur.low, Math.abs(cur.high - prev.close), Math.abs(cur.low - prev.close));
+    const upMove = cur.high - prev.high;
+    const downMove = prev.low - cur.low;
+    plusDM[i] = upMove > downMove && upMove > 0 ? upMove : 0;
+    minusDM[i] = downMove > upMove && downMove > 0 ? downMove : 0;
+  }
+
+  let trSum = 0;
+  let plusDMSum = 0;
+  let minusDMSum = 0;
+  for (let i = 1; i <= period; i += 1) {
+    trSum += tr[i] as number;
+    plusDMSum += plusDM[i] as number;
+    minusDMSum += minusDM[i] as number;
+  }
+
+  const dx: (number | null)[] = new Array(n).fill(null);
+  const recordDI = (i: number): void => {
+    const plusDI = trSum > 0 ? (100 * plusDMSum) / trSum : 0;
+    const minusDI = trSum > 0 ? (100 * minusDMSum) / trSum : 0;
+    plusDIOut[i] = plusDI;
+    minusDIOut[i] = minusDI;
+    const sum = plusDI + minusDI;
+    dx[i] = sum > 0 ? (100 * Math.abs(plusDI - minusDI)) / sum : 0;
+  };
+  recordDI(period);
+
+  for (let i = period + 1; i < n; i += 1) {
+    trSum = trSum - trSum / period + (tr[i] as number);
+    plusDMSum = plusDMSum - plusDMSum / period + (plusDM[i] as number);
+    minusDMSum = minusDMSum - minusDMSum / period + (minusDM[i] as number);
+    recordDI(i);
+  }
+
+  let adxSum = 0;
+  let seeded = false;
+  for (let i = period; i < n; i += 1) {
+    const value = dx[i];
+    if (value === null || value === undefined) continue;
+    if (!seeded) {
+      adxSum += value;
+      // Wilder's ADX seeds from the simple average of the FIRST `period` DX
+      // values, which are DX[period] .. DX[2*period - 1] -- period values,
+      // not period + 1. Seeding one index later (2*period) summed an extra
+      // term and inflated the very first ADX reading above the 0-100 bound
+      // DX is otherwise guaranteed to respect.
+      if (i === period * 2 - 1) {
+        adxOut[i] = adxSum / period;
+        seeded = true;
+      }
+    } else {
+      const prevAdx = adxOut[i - 1] as number;
+      adxOut[i] = (prevAdx * (period - 1) + value) / period;
+    }
+  }
+  return { adx: adxOut, plusDI: plusDIOut, minusDI: minusDIOut };
+}

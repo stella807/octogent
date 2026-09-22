@@ -174,7 +174,7 @@ discovering it live.
 
 ```bash
 pnpm install
-pnpm test                 # 257 tests, no network needed
+pnpm test                 # 272 tests, no network needed
 pnpm build
 
 # Runs offline against seeded synthetic data
@@ -471,6 +471,43 @@ Index already incorporates social media volume as one of its several inputs,
 aggregated and lagged properly -- that is the legitimate version of this idea
 already in the tree, and it is documented above as a negative result.
 
+## The indicator checklist from the reel — built for real, and it fails too
+
+A screenshot made the rounds of TradingView's "DIY Custom Strategy Builder,"
+a checkbox panel with 30+ indicators (TSI, TDFI, McGinley Dynamic, Ichimoku,
+B-Xtrender, VWAP, Chandelier Exit, Vortex, and more) and no disclosed rule for
+combining any of them. Two were specifically called out: B-Xtrender and
+"Range Detector."
+
+Built both to their real specs rather than guessing. B-Xtrender is a
+published, well-documented indicator (RSI applied to EMA spreads, on two
+timeframes) -- implemented faithfully. "Range Detector" is a generic name
+several unrelated TradingView scripts use with different formulas, and the
+specific one in the screenshot isn't published anywhere accessible, so
+`bxtrender-adx` substitutes Wilder's ADX -- the textbook method for the same
+question ("is this market trending or ranging") that predates every
+community variant. That substitution is stated here, not left implicit.
+
+Combined the way they're meant to be used: B-Xtrender reads trend direction,
+ADX gates whether the market is trending strongly enough to act on it.
+
+Full-sample, this one actually looked good -- **the lowest max drawdown of
+any trend strategy tested** (4.01%, versus 4.24% for donchian-breakout):
+
+| | full-sample return | max drawdown | Calmar | walk-forward OOS |
+|---|---|---|---|---|
+| bxtrender-adx | +24.55% | **4.01%** | 0.67 | **-0.41%** |
+
+Then walk-forward: **-0.41% out-of-sample, efficiency 0.12.** Same failure as
+every other strategy stacked from indicator checklists tonight (tsmom,
+bollinger-reversion, donchian-sentiment). More indicators combined into a
+plausible-sounding rule is not more edge -- it's more knobs to accidentally
+tune to the specific history being stared at, which is exactly what
+walk-forward exists to catch. A bug was also caught building this: the ADX
+implementation's seeding step summed one extra DX value before averaging,
+inflating early readings above the mathematically-guaranteed 0-100 bound --
+caught by a test asserting that exact bound, not by eyeballing the numbers.
+
 ## Strategies
 
 | strategy | shape | why it is here |
@@ -483,6 +520,7 @@ already in the tree, and it is documented above as a negative result.
 | `tsmom` | textbook time-series momentum | Tested from literature; fails walk-forward (efficiency 0.29). |
 | `bollinger-reversion` | Z-score mean reversion vs. rolling mean | Tested from a vendor claim; fails walk-forward (efficiency -0.16). |
 | `donchian-sentiment` | donchian-breakout, gated by Fear & Greed Index | Tested the sentiment hypothesis directly; it made returns worse, not better. |
+| `bxtrender-adx` | B-Xtrender direction, gated by ADX trend strength | From the viral indicator-checklist screenshot; fails walk-forward (efficiency 0.12). |
 | `take-profit-scalp` | tiny target, distant or absent stop | **Not for trading.** The 99%-win-rate demo above. |
 
 Multi-asset strategies, for the `portfolio` command:
@@ -513,7 +551,7 @@ src/
   live/        Broker interface, paper broker, gated exchange broker, runner
   report.ts    Text reports, including the automatic reality checks
 docs/architecture.md   Diagrams of the pipeline, fill timing and kill switch
-test/          257 tests
+test/          272 tests
 ```
 
 ## What this is not

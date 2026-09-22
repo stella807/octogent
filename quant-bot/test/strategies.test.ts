@@ -9,6 +9,7 @@ import {
   takeProfitScalp,
   tsmom,
   bollingerReversion,
+  bxtrenderAdx,
 } from '../src/strategy/index.ts';
 import { DEFAULT_CONFIG, runBacktest } from '../src/backtest/engine.ts';
 import { DEFAULT_COSTS } from '../src/backtest/costs.ts';
@@ -315,5 +316,70 @@ describe('bollinger-reversion', () => {
   it('is flat during warmup', () => {
     const series = ramp(Array.from({ length: 400 }, (_, i) => 100 + Math.sin(i / 10) * 5));
     expect(bollingerReversion.create(series, bollingerReversion.defaults).signalAt(5, null).target).toBe(0);
+  });
+});
+
+describe('bxtrender-adx', () => {
+  const uptrend = ramp(Array.from({ length: 200 }, (_, i) => 100 + i * 1.5));
+  const chop = ramp(Array.from({ length: 200 }, (_, i) => 100 + Math.sin(i / 3) * 2));
+  const downtrend = ramp(Array.from({ length: 200 }, (_, i) => 400 - i * 1.5));
+
+  it('goes long on a strong, confirmed uptrend', () => {
+    const strategy = bxtrenderAdx.create(uptrend, bxtrenderAdx.defaults);
+    const signal = strategy.signalAt(199, null);
+    expect(signal.target).toBe(1);
+    expect(signal.reason).toMatch(/ADX .* confirms trend/);
+  });
+
+  it('stays flat in a ranging market even if direction briefly aligns', () => {
+    const strategy = bxtrenderAdx.create(chop, bxtrenderAdx.defaults);
+    const signal = strategy.signalAt(199, null);
+    expect(signal.target).toBe(0);
+  });
+
+  it('stays flat during a downtrend', () => {
+    const strategy = bxtrenderAdx.create(downtrend, bxtrenderAdx.defaults);
+    expect(strategy.signalAt(199, null).target).toBe(0);
+  });
+
+  it('exits when ADX fades even if direction has not flipped', () => {
+    // Strong trend, then it goes flat (still nominally "up" by comparison to
+    // a while ago, but ADX collapses because the market stopped trending).
+    const fading = ramp([
+      ...Array.from({ length: 150 }, (_, i) => 100 + i * 2),
+      ...Array.from({ length: 50 }, () => 400),
+    ]);
+    const strategy = bxtrenderAdx.create(fading, bxtrenderAdx.defaults);
+    const held: Position = {
+      qty: 1, entryPrice: 300, entryTime: 0, stopPrice: 280, highWaterPrice: 400,
+      realizedPnl: 0, feesPaid: 0, peakQty: 1, equityAtEntry: 10_000,
+    };
+    const signal = strategy.signalAt(199, held);
+    expect(signal.target).toBe(0);
+  });
+
+  it('never lowers an existing stop', () => {
+    const strategy = bxtrenderAdx.create(uptrend, bxtrenderAdx.defaults);
+    const high = (uptrend[199]?.close ?? 0) - 1;
+    const held: Position = {
+      qty: 1, entryPrice: 150, entryTime: 0, stopPrice: high, highWaterPrice: 400,
+      realizedPnl: 0, feesPaid: 0, peakQty: 1, equityAtEntry: 10_000,
+    };
+    expect(strategy.signalAt(199, held).stopPrice).toBe(high);
+  });
+
+  it('is flat during warmup', () => {
+    expect(bxtrenderAdx.create(uptrend, bxtrenderAdx.defaults).signalAt(5, null).target).toBe(0);
+  });
+
+  it('rejects shortEma1 >= shortEma2', () => {
+    expect(() => bxtrenderAdx.create(uptrend, { shortEma1: 20, shortEma2: 20 }))
+      .toThrow(/shortEma1 < shortEma2/);
+  });
+
+  it('cannot see the future', () => {
+    const full = bxtrenderAdx.create(uptrend, bxtrenderAdx.defaults);
+    const prefix = bxtrenderAdx.create(uptrend.slice(0, 151), bxtrenderAdx.defaults);
+    expect(prefix.signalAt(150, null)).toEqual(full.signalAt(150, null));
   });
 });
