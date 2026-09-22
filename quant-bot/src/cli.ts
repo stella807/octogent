@@ -22,6 +22,7 @@ import { alignSentiment, fetchSentiment } from './data/sentiment.ts';
 import type { StrategyContext } from './strategy/types.ts';
 import { runPortfolioBacktest } from './portfolio/engine.ts';
 import { equalWeight, getPortfolioStrategy, PORTFOLIO_STRATEGIES } from './portfolio/index.ts';
+import { asBacktestResult as blendAsBacktestResult, runBlend } from './backtest/blend.ts';
 
 const USAGE = `
 quant-bot — crypto strategy research and paper trading
@@ -29,6 +30,7 @@ quant-bot — crypto strategy research and paper trading
   backtest     Run one strategy over history and print the full risk report
   compare      Run every strategy plus buy-and-hold, side by side
   portfolio    Run a multi-asset strategy against an equal-weight benchmark
+  blend        Run several strategies at once, each on its own slice of capital
   walkforward  Pick parameters out-of-sample and report what survived
   montecarlo   Resample trade order to show the real spread of outcomes
   paper        Trade live market data with simulated fills (no real money)
@@ -46,6 +48,8 @@ Common
   --strategy NAME        ${Object.keys(STRATEGIES).join(' | ')}
                          portfolio: ${Object.keys(PORTFOLIO_STRATEGIES).join(' | ')}
   --symbols A,B,C        Universe for the portfolio command
+  --strategies A,B       Strategies to run at once, for the blend command
+  --weights 0.5,0.5       Capital split for blend (default: equal)
   --timeframe 1d         1m 5m 15m 1h 4h 1d
   --bars 1500            How much history to use
   --equity 10000         Starting equity in quote currency
@@ -74,6 +78,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       strategy: { type: 'string', default: 'donchian-breakout' },
       symbol: { type: 'string', default: 'BTC/USDT' },
       symbols: { type: 'string', default: 'BTC/USD,ETH/USD,SOL/USD,LTC/USD,LINK/USD,AVAX/USD' },
+      strategies: { type: 'string' },
+      weights: { type: 'string' },
       exchange: { type: 'string', default: 'binance' },
       timeframe: { type: 'string', default: '1d' },
       bars: { type: 'string', default: '1500' },
@@ -225,6 +231,59 @@ export async function main(argv: readonly string[]): Promise<number> {
         });
       } else {
         process.stdout.write(`${formatPortfolio(result, bench, alignmentCoverage(loaded, series))}\n`);
+      }
+      return 0;
+    }
+
+    case 'blend': {
+      const names = (values.strategies as string | undefined)?.split(',').map((s) => s.trim()).filter(Boolean);
+      if (!names || names.length < 2) {
+        throw new Error('blend needs --strategies A,B (at least two, comma separated)');
+      }
+      const weightStrs = (values.weights as string | undefined)?.split(',').map((s) => s.trim());
+      const weights = weightStrs
+        ? weightStrs.map((w) => num(w, 'weights'))
+        : names.map(() => 1 / names.length);
+      if (weights.length !== names.length) {
+        throw new Error(`--weights has ${weights.length} entries but --strategies has ${names.length}`);
+      }
+
+      const candles = await loadData();
+      const members = await Promise.all(names.map(async (name, idx) => {
+        const factory = getStrategy(name);
+        const context = await loadContext(factory.name, candles);
+        return { factory, params: factory.defaults, weight: weights[idx] as number, context };
+      }));
+
+      const result = runBlend(candles, members, config);
+      const bench = runBacktest(candles, buyAndHold.create(candles, {}), benchmarkConfig(config));
+
+      if (values.json) {
+        emit({
+          metrics: computeMetrics(blendAsBacktestResult(result)),
+          benchmark: computeMetrics(bench),
+          members: Object.fromEntries(
+            [...result.members].map(([name, r]) => [name, computeMetrics(r)]),
+          ),
+        });
+      } else {
+        const combined = computeMetrics(blendAsBacktestResult(result));
+        process.stdout.write(formatBacktest(blendAsBacktestResult(result), bench));
+        process.stdout.write('\n\nPER-STRATEGY (run alone, at its allocated capital)\n');
+        for (const [name, r] of result.members) {
+          const m = computeMetrics(r);
+          process.stdout.write(
+            `  ${name.padEnd(22)} return ${m.totalReturnPct.toFixed(2).padStart(8)}%  maxDD ${m.maxDrawdownPct.toFixed(2).padStart(6)}%  calmar ${m.calmar.toFixed(2)}\n`,
+          );
+        }
+        process.stdout.write(
+          `\n  Combined: return ${combined.totalReturnPct.toFixed(2)}%  maxDD ${combined.maxDrawdownPct.toFixed(2)}%  calmar ${combined.calmar.toFixed(2)}\n`,
+        );
+        process.stdout.write(
+          combined.calmar > Math.max(...[...result.members.values()].map((r) => computeMetrics(r).calmar))
+            ? '\n  Combined Calmar beats every strategy run alone: the blend reduced risk without giving up return.\n'
+            : '\n  Combined Calmar does NOT beat the best strategy run alone: blending added no value here.\n',
+        );
       }
       return 0;
     }

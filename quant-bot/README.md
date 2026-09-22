@@ -174,7 +174,7 @@ discovering it live.
 
 ```bash
 pnpm install
-pnpm test                 # 246 tests, no network needed
+pnpm test                 # 257 tests, no network needed
 pnpm build
 
 # Runs offline against seeded synthetic data
@@ -194,6 +194,7 @@ node --experimental-strip-types src/cli.ts compare \
 | `walkforward` | What survives when parameters are chosen without seeing the test data |
 | `montecarlo` | How much of the result was the order the trades happened to arrive in |
 | `portfolio` | A multi-asset strategy against an equal-weight benchmark |
+| `blend` | Several strategies at once, each on its own slice of capital |
 | `paper` | Live market data, simulated fills, no real money |
 | `live` | Real orders. Two independent gates stand in front of it. |
 
@@ -426,6 +427,50 @@ for new strategies — is the section above and the walk-forward tooling
 underneath it. It is not a separate system; it is this same process, run
 again.
 
+## Running strategies in parallel — tested, doesn't beat the best one alone
+
+`blend` runs several strategies at once, each managing its own fixed slice of
+starting capital, then combines them into one account -- the strategy-level
+version of portfolio mode's asset diversification. Tested two pairings on
+real BTC data:
+
+| blend | return | max drawdown | Calmar |
+|---|---|---|---|
+| vol-target alone | +175.54% | 15.45% | **0.85** |
+| donchian-breakout + vol-target (50/50) | +101.83% | 12.14% | 0.74 |
+| donchian-breakout + rsi-mean-reversion (50/50) | +12.80% | 3.21% | 0.46 |
+
+Neither blend beats running the single best strategy alone with full capital.
+Both are long-only trend systems on the same asset, so they tend to draw down
+together -- there isn't enough independence between the decision rules for
+diversification to pay off, the same way asset diversification only helps to
+the extent the assets are not just leveraged copies of the same bet.
+
+```bash
+node --experimental-strip-types src/cli.ts blend --exchange coinbase \
+  --symbol BTC/USD --strategies donchian-breakout,vol-target
+```
+
+## Social sentiment (Twitter/X, Truth Social): researched, not built
+
+Truth Social has no public developer API. The only official access, "Truth
+API," launched in 2026 at $60,000-$100,000/month, sold to financial firms
+specifically because Trump's posts move markets fast enough that speed of
+access is worth that price -- which confirms the underlying idea is real,
+and confirms it is priced entirely out of reach here. [Euronews, "What is Truth API?"](https://www.euronews.com/business/2026/08/13/what-is-truth-api-the-100000-feed-that-has-landed-trump-a-lawsuit)
+
+Twitter/X's API has been paid and expensive since 2023. Free social-sentiment
+aggregators (LunarCrush, Santiment) exist, but their free tiers are either
+narrow or run a 30-day lag -- a month-old sentiment reading is not usable for
+trading a bar that closed today.
+
+Unofficial scrapers exist for both platforms. Not used here, for the same
+reason the invite-only TradingView script wasn't trusted earlier: this repo
+only integrates sources it can vouch for. `donchian-sentiment`'s Fear & Greed
+Index already incorporates social media volume as one of its several inputs,
+aggregated and lagged properly -- that is the legitimate version of this idea
+already in the tree, and it is documented above as a negative result.
+
 ## Strategies
 
 | strategy | shape | why it is here |
@@ -468,7 +513,7 @@ src/
   live/        Broker interface, paper broker, gated exchange broker, runner
   report.ts    Text reports, including the automatic reality checks
 docs/architecture.md   Diagrams of the pipeline, fill timing and kill switch
-test/          246 tests
+test/          257 tests
 ```
 
 ## What this is not
