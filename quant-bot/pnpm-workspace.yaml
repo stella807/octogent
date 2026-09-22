@@ -1,0 +1,8 @@
+# Marks this directory as its own workspace root. quant-bot lives nested
+# inside a larger monorepo (see README) that has its own pnpm-workspace.yaml;
+# without this file, `pnpm install` run from inside quant-bot/ walks up and
+# finds THAT workspace root instead, and installs against its lockfile rather
+# than this project's own — which silently drops optionalDependencies like
+# ccxt. This file stops pnpm from walking past this directory.
+packages:
+  - .
