@@ -36,7 +36,7 @@ pnpm cli watch --interval 60  # poll hourly until interrupted
 
 ## Watchlist
 
-`watchlist.json` holds the org slugs to poll and a reward floor. Nine slugs are included, each
+`watchlist.json` holds the org slugs to poll and a reward floor. Twenty-six slugs are included, each
 confirmed to serve a real board (24 further candidates were probed and 404ed). Add an org by dropping its slug in; `path` overrides the board path
 for orgs that do not use the community layout.
 
