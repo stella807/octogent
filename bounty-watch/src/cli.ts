@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fetchContests, formatContests } from "./cantina.ts";
 import { HttpBoardClient } from "./client.ts";
 import { HttpIssueStateClient } from "./liveness.ts";
 import { pollOnce } from "./poll.ts";
@@ -13,6 +14,7 @@ const USAGE = `bounty-watch — poll Algora org boards for newly opened bounties
 Usage:
   bounty-watch once   [options]   Poll every board once and print what is new
   bounty-watch watch  [options]   Poll on an interval until interrupted
+  bounty-watch contests           List live or upcoming Cantina audit contests
 
 Options:
   --watchlist <path>   Watchlist JSON (default: ./watchlist.json)
@@ -93,6 +95,16 @@ async function main(argv: readonly string[]): Promise<number> {
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     return 2;
+  }
+
+  if (args.command === "contests") {
+    try {
+      console.log(formatContests(await fetchContests()));
+      return 0;
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      return 1;
+    }
   }
 
   if (args.help || args.command === "help") {
