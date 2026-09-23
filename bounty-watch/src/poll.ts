@@ -1,5 +1,7 @@
 import type { BoardClient } from "./client.ts";
 import type { Bounty, PollError, PollReport, Watchlist } from "./domain/types.ts";
+import type { IssueStateClient } from "./liveness.ts";
+import { filterLive } from "./liveness.ts";
 import { parseBoard } from "./parse.ts";
 import type { SeenStore } from "./store.ts";
 
@@ -7,6 +9,8 @@ export interface PollOptions {
   readonly client: BoardClient;
   readonly store: SeenStore;
   readonly watchlist: Watchlist;
+  /** When supplied, bounties whose issue is closed upstream are reported as stale. */
+  readonly issueState?: IssueStateClient;
   /** Delay between board requests. Injectable so tests do not wait. */
   readonly sleep?: (ms: number) => Promise<void>;
   readonly delayMs?: number;
@@ -54,7 +58,11 @@ export async function pollOnce(options: PollOptions): Promise<PollReport> {
     }
   }
 
-  const fresh = open.filter((bounty) => !previous.has(seenKey(bounty)));
+  const { live, closed } = options.issueState
+    ? await filterLive(open, options.issueState)
+    : { live: open, closed: [] as Bounty[] };
+
+  const fresh = live.filter((bounty) => !previous.has(seenKey(bounty)));
 
   // Only prune boards we actually reached. Dropping ids for a board that failed
   // would re-announce its whole backlog as new on the next successful poll.
@@ -64,7 +72,8 @@ export async function pollOnce(options: PollOptions): Promise<PollReport> {
   return {
     polledAt: now().toISOString(),
     fresh,
-    open,
+    open: live,
+    stale: closed,
     errors,
   };
 }

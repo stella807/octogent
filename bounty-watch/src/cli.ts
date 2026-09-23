@@ -2,6 +2,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HttpBoardClient } from "./client.ts";
+import { HttpIssueStateClient } from "./liveness.ts";
 import { pollOnce } from "./poll.ts";
 import { formatReport } from "./report.ts";
 import { FileSeenStore } from "./store.ts";
@@ -18,6 +19,7 @@ Options:
   --state <path>       Seen-bounty state file (default: ./.bounty-watch-state.json)
   --min <usd>          Override the watchlist reward floor
   --interval <min>     Minutes between polls in watch mode (default: 30, min: 5)
+  --no-verify          Skip the upstream check for already-closed issues
   --json               Print the raw report as JSON
   -h, --help           Show this message
 `;
@@ -29,6 +31,7 @@ interface Args {
   readonly min?: number;
   readonly intervalMin: number;
   readonly json: boolean;
+  readonly verify: boolean;
   readonly help: boolean;
 }
 
@@ -64,6 +67,7 @@ export function parseArgs(argv: readonly string[]): Args {
     ...(min === undefined ? {} : { min }),
     intervalMin: interval,
     json: rest.includes("--json"),
+    verify: !rest.includes("--no-verify"),
     help: rest.includes("--help") || rest.includes("-h"),
   };
 }
@@ -76,6 +80,7 @@ async function runOnce(args: Args): Promise<void> {
     client: new HttpBoardClient(),
     store: new FileSeenStore(args.state),
     watchlist,
+    ...(args.verify ? { issueState: new HttpIssueStateClient() } : {}),
   });
 
   console.log(args.json ? JSON.stringify(report, null, 2) : formatReport(report));

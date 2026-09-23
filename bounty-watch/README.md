@@ -56,6 +56,19 @@ treated as a cold start rather than a crash.
 
 Requests are sequential with a 1.5s pause between boards and a descriptive User-Agent.
 
+## Closed-bounty filtering
+
+Algora keeps listing a bounty after its issue or PR is closed — an orphaned bounty cannot be deleted
+by its sponsor. On the first real run, **two of three "open" bounties were already resolved
+upstream** (`coolify#6696` shipped via another PR; `calcom/font#2` closed in 2021). Each open bounty
+is therefore checked against the GitHub API and reported as stale if its issue is closed.
+
+The check **fails open**: a bounty whose state cannot be determined is kept, because hiding real work
+is worse than showing a stale listing. It needs GitHub API access — set `GITHUB_TOKEN` (or
+`GH_TOKEN`) to enable it and to lift the anonymous 60-requests/hour limit. In sandboxes whose egress
+proxy blocks unauthenticated GitHub calls, an unset token means every bounty is reported as live.
+Pass `--no-verify` to skip the check entirely.
+
 ## Caveats
 
 This scrapes server-rendered HTML because no API is available. Algora can change its markup at any

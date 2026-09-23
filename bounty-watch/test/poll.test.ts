@@ -181,6 +181,29 @@ describe("pollOnce", () => {
     expect(delays).toEqual([1500, 1500]);
   });
 
+  it("reports a bounty as stale when its issue is closed upstream", async () => {
+    const report = await pollOnce({
+      client: clientFor({
+        acme: board([
+          { amount: 100, url: "https://github.com/acme/x/issues/1", title: "dead" },
+          { amount: 100, url: "https://github.com/acme/x/issues/2", title: "alive" },
+        ]),
+      }),
+      store: new MemorySeenStore(),
+      watchlist: watchlist([{ slug: "acme" }]),
+      sleep: noSleep,
+      issueState: {
+        async fetchState(ref) {
+          return ref.number === 1 ? "closed" : "open";
+        },
+      },
+    });
+
+    expect(report.open.map((b) => b.title)).toEqual(["alive"]);
+    expect(report.stale.map((b) => b.title)).toEqual(["dead"]);
+    expect(report.fresh.map((b) => b.title)).toEqual(["alive"]);
+  });
+
   it("scopes identity per board so the same issue on two boards is tracked separately", () => {
     const base = {
       id: "https://github.com/acme/x/issues/1",

@@ -36,6 +36,8 @@ export interface PollReport {
   readonly polledAt: string;
   readonly fresh: readonly Bounty[];
   readonly open: readonly Bounty[];
+  /** Listed as open by Algora but whose issue or PR is confirmed closed upstream. */
+  readonly stale: readonly Bounty[];
   readonly errors: readonly PollError[];
 }
 

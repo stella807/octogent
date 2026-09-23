@@ -19,6 +19,13 @@ export function formatReport(report: PollReport): string {
   const total = report.open.reduce((sum, bounty) => sum + bounty.amountUsd, 0);
   lines.push(`Open across watchlist: ${report.open.length} bounty(s), ${money(total)} total.`);
 
+  if (report.stale.length > 0) {
+    lines.push(`Ignored ${report.stale.length} listed bounty(s) whose issue is already closed:`);
+    for (const bounty of report.stale) {
+      lines.push(`  ${money(bounty.amountUsd).padStart(8)}  ${bounty.ref}  (closed upstream)`);
+    }
+  }
+
   for (const error of report.errors) {
     lines.push(`  ! ${error.slug}: ${error.message}`);
   }
