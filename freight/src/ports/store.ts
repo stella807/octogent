@@ -38,6 +38,13 @@ export type SupplierRecord = {
 
 export type StatDelta = Partial<Omit<SupplierStats, "companyId">>;
 
+/** A shipment event with the context an activity feed needs to render one line. */
+export type FloorEvent = ShipmentEvent & {
+  reference: string;
+  actorName: string | null;
+  actorCompanyName: string | null;
+};
+
 export interface Store {
   // Identity
   createCompany(company: NewCompany): Company;
@@ -98,6 +105,8 @@ export interface Store {
   ): { supplierCompanyId: string; lastMessageAt: string; count: number }[];
   addEvent(event: Omit<ShipmentEvent, "id">): ShipmentEvent;
   listEvents(shipmentId: string): ShipmentEvent[];
+  /** Newest first, across shipments. `shipmentIds` of null means every shipment. */
+  listRecentEvents(shipmentIds: string[] | null, limit: number): FloorEvent[];
 
   /** Awarded prices used as rate comparables. */
   listComparableAwards(): ComparableAward[];

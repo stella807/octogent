@@ -1,0 +1,330 @@
+/* Command floor.
+ *
+ * Chart colours are their own tokens, not the UI's brand colours: the marks are
+ * validated steps from one blue ramp (#256abf on the light surface, #3987e5 on
+ * the dark one, both clearing 3:1), and the status trio is reserved for state.
+ * Nothing here sets an inline style attribute, so `style-src 'self'` holds.
+ */
+
+:root {
+  --chart-mark: #256abf;
+  --chart-track: #cde2fb;
+  --chart-grid: #e4e9ee;
+  --chart-idle: #55697a;
+  --status-good: #0ca30c;
+  --status-warning: #b07d00; /* the documented step is sub-3:1 on white, so text uses this darker one */
+  --status-critical: #d03b3b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --chart-mark: #3987e5;
+    --chart-track: #184f95;
+    --chart-grid: #26333d;
+    --chart-idle: #9db0be;
+    --status-good: #4cae7a;
+    --status-warning: #fab219;
+    --status-critical: #e0736b;
+  }
+}
+
+.floor {
+  display: grid;
+  gap: 16px;
+}
+.floor.is-refreshing {
+  opacity: 0.72;
+}
+.floor__status {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  text-align: right;
+}
+.floor__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.82rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.floor__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-good);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-good) 22%, transparent);
+}
+
+/* ------------------------------------------------------------------ stats */
+
+.stat__value--warning {
+  color: var(--status-warning);
+}
+.stat__value--good {
+  color: var(--status-good);
+}
+.stat__flag {
+  color: var(--status-warning);
+  font-weight: 700;
+}
+/* Proportional figures: tabular digits make a headline number look loose. */
+.stat__value {
+  font-variant-numeric: normal;
+}
+
+/* ------------------------------------------------------------------ orbit */
+
+.card--orbit {
+  padding-bottom: 10px;
+}
+.orbit {
+  width: 100%;
+  height: auto;
+  display: block;
+  max-height: 380px;
+}
+
+.orbit__track {
+  fill: none;
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+
+.orbit__ring--spinning {
+  transform-origin: 450px 170px;
+  animation: orbit-spin 64s linear infinite;
+}
+@keyframes orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .orbit__ring--spinning {
+    animation: none;
+  }
+}
+
+.orbit__handoff {
+  fill: none;
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+.orbit__handoff--live {
+  stroke: color-mix(in srgb, var(--chart-mark) 45%, transparent);
+  stroke-width: 1.5;
+}
+
+.orbit__core {
+  fill: var(--surface);
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+.orbit__hero {
+  fill: var(--ink);
+  font-size: 44px;
+  font-weight: 700;
+}
+.orbit__hero-label {
+  fill: var(--ink-soft);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+}
+
+.orbit__node {
+  fill: var(--surface);
+  stroke: var(--chart-idle);
+  stroke-width: 1.5;
+}
+.orbit__station--live .orbit__node {
+  fill: var(--chart-mark);
+  stroke: var(--chart-mark);
+}
+.orbit__count {
+  fill: var(--ink-soft);
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.orbit__station--live .orbit__count {
+  fill: #ffffff;
+}
+.orbit__index {
+  fill: var(--ink-soft);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+.orbit__label {
+  fill: var(--ink);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+}
+
+/* ------------------------------------------------------------------- rail */
+
+.rail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+  gap: 12px;
+}
+
+.rail__station {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+.rail__station--live {
+  border-color: color-mix(in srgb, var(--chart-mark) 45%, var(--line));
+}
+
+.rail__top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.rail__index {
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.rail__label {
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+.rail__state {
+  margin-left: auto;
+  letter-spacing: 0.1em;
+  color: var(--ink-soft);
+}
+.rail__station--live .rail__state {
+  color: var(--chart-mark);
+  font-weight: 700;
+}
+.rail__count {
+  font-size: 1.7rem;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.bar {
+  display: block;
+}
+.bar__track {
+  fill: var(--chart-track);
+}
+.bar__fill {
+  fill: var(--chart-mark);
+}
+
+/* ------------------------------------------------------------------ chart */
+
+.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  touch-action: none;
+}
+.chart:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+.chart__grid {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+.chart__tick {
+  fill: var(--ink-soft);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.chart__area {
+  fill: color-mix(in srgb, var(--chart-mark) 10%, transparent);
+}
+.chart__line {
+  fill: none;
+  stroke: var(--chart-mark);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.chart__crosshair {
+  stroke: var(--chart-idle);
+  stroke-width: 1;
+}
+/* `hidden` does nothing on an SVG element, so the idle crosshair parks here. */
+.chart .is-hidden {
+  visibility: hidden;
+}
+/* The 2px surface ring keeps a marker legible where it crosses the line. */
+.chart__cursor {
+  fill: var(--chart-mark);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+.chart__end {
+  fill: var(--chart-mark);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+.chart__end-label {
+  fill: var(--ink-soft);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.readout {
+  padding-top: 8px;
+  min-height: 1.4em;
+}
+.table-twin {
+  margin-top: 10px;
+}
+.table-twin table {
+  margin-top: 8px;
+}
+
+/* ------------------------------------------------------------------- tape */
+
+.card__head--padded {
+  padding: 16px 16px 0;
+}
+.tape-scroll {
+  max-height: 440px;
+  overflow-y: auto;
+}
+.tape thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+.tape__time {
+  white-space: nowrap;
+  color: var(--ink-soft);
+}
+.tape__ref {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tape tbody tr:hover {
+  background: var(--surface-2);
+}
+
+@media (max-width: 720px) {
+  .orbit {
+    max-height: 300px;
+  }
+  .floor__status {
+    justify-items: start;
+    text-align: left;
+  }
+}

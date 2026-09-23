@@ -13,6 +13,7 @@ import {
 } from "../app/accounts.ts";
 import { listCompanies, platformStats, setVerification } from "../app/admin.ts";
 import { unauthorized } from "../app/errors.ts";
+import { floorView } from "../app/floor.ts";
 import { listThread, sendMessage } from "../app/messages.ts";
 import { listOpportunities, parseFilters } from "../app/opportunities.ts";
 import type { Principal } from "../app/principal.ts";
@@ -139,6 +140,13 @@ export const routes: Route<Ctx>[] = [
         completedShipments: stats.completedShipments,
       }));
     },
+  },
+
+  {
+    method: "GET",
+    pattern: "/api/floor",
+    auth: true,
+    handler: (context) => floorView(context.store, me(context)),
   },
 
   {

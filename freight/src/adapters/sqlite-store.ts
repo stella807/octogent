@@ -28,6 +28,7 @@ import type {
   VerificationStatus,
 } from "../domain/types.ts";
 import type {
+  FloorEvent,
   NewCompany,
   NewQuote,
   NewShipment,
@@ -598,6 +599,39 @@ export class SqliteStore implements Store {
       actorUserId: textOrNull(row, "actor_user_id"),
       detail: text(row, "detail"),
       createdAt: text(row, "created_at"),
+    }));
+  }
+
+  listRecentEvents(shipmentIds: string[] | null, limit: number): FloorEvent[] {
+    if (shipmentIds !== null && shipmentIds.length === 0) return [];
+    const scope =
+      shipmentIds === null
+        ? ""
+        : `WHERE e.shipment_id IN (${shipmentIds.map(() => "?").join(",")})`;
+    const params: (string | number)[] = shipmentIds === null ? [] : [...shipmentIds];
+    params.push(limit);
+    const rows = this.db
+      .prepare(
+        `SELECT e.*, s.reference, u.name AS actor_name, c.name AS actor_company_name
+         FROM shipment_events e
+         JOIN shipments s ON s.id = e.shipment_id
+         LEFT JOIN users u ON u.id = e.actor_user_id
+         LEFT JOIN companies c ON c.id = u.company_id
+         ${scope}
+         ORDER BY e.created_at DESC, e.id DESC
+         LIMIT ?`,
+      )
+      .all(...params) as Row[];
+    return rows.map((row) => ({
+      id: text(row, "id"),
+      shipmentId: text(row, "shipment_id"),
+      type: text(row, "type"),
+      actorUserId: textOrNull(row, "actor_user_id"),
+      detail: text(row, "detail"),
+      createdAt: text(row, "created_at"),
+      reference: text(row, "reference"),
+      actorName: textOrNull(row, "actor_name"),
+      actorCompanyName: textOrNull(row, "actor_company_name"),
     }));
   }
 

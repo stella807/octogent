@@ -38,6 +38,44 @@ withdraw, and update the load's status through to delivery.
 **Admins** review companies and record a verification decision with a note the
 company can read, and see platform totals.
 
+**Everyone lands on the command floor** — one live read of the book, scoped to
+who is looking.
+
+## The command floor
+
+The home screen is an operations view: six stations in the shape work actually
+moves — **intake → match → quote → counter → award → settle** — a station
+lighting up when something is sitting in it, a cumulative award curve, the
+numbers that say whether anything is blocked, and the tape of every event on
+the book.
+
+It is built to be trusted rather than to look busy:
+
+- **Every count is a live query** against the same tables the rest of the app
+  writes. There is no separate telemetry pipeline, nothing is sampled, nothing
+  is smoothed. A station reading 3 means three shipments are in that state.
+- **It polls, and says so.** The status line reads "polls every 5s" rather than
+  implying a socket that is not there, and refreshing holds the previous render
+  at reduced opacity instead of flashing a skeleton. Polling pauses while the
+  pointer or keyboard focus is in the chart — redrawing under someone's cursor
+  is worse than a five-second-old number.
+- **The orbit has a text twin.** The ring is decorative; the six station cards
+  under it carry the same numbers with labels, bars and last-activity times,
+  and the curve has a table view. Nothing is reachable only by hovering.
+- **Reading the floor does not change the data.** The supplier's match count
+  calls the domain rule directly rather than the opportunity use case, because
+  that one records "opportunities seen" — a dashboard polling in the background
+  would otherwise inflate the denominator of the response rate that matching
+  later reads. There is a test for exactly that.
+
+Scope is enforced server-side: a shipper sees their own book, a supplier sees
+the loads open to them plus everything they have bid on, an admin sees the
+platform. The charts are hand-drawn SVG — no chart library, no canvas, no
+inline styles, so the same `default-src 'self'` policy covers the dashboard.
+Chart colours are steps from one blue ramp, validated against both surfaces
+(light `#256abf`, dark `#3987e5`, each clearing 3:1) rather than picked by eye;
+stations encode *state* (live or idle), not six competing hues.
+
 ## The matching engine
 
 Matching is the centre of the product, and it is built to be argued with.
@@ -93,6 +131,7 @@ src/app/        Use cases and authorization, over the store port
 src/ports/      The persistence interface the app layer talks to
 src/adapters/   SQLite implementation of that port, plus the SQL schema
 src/http/       Router, cookies/CSRF, static files — transport only
+src/app/floor.ts  The command floor's view model, scoped per role
 src/security/   scrypt password hashing, session and CSRF tokens
 web/            Browser client: no build step, no framework, no CDN
 test/           Domain tests plus end-to-end tests over real HTTP
@@ -120,8 +159,8 @@ Postgres adapter is a new file, not a rewrite.
 Everything below the line is *not* built, and nothing in the product pretends
 otherwise on screen.
 
-**Implemented and working:** accounts and companies, roles (shipper, supplier,
-admin), sessions, supplier capability profiles, shipment posting with
+**Implemented and working:** the command floor, accounts and companies, roles
+(shipper, supplier, admin), sessions, supplier capability profiles, shipment posting with
 marketplace or invite-only visibility, eligibility and scored matching with
 factor-level explanations, opportunity board with filters, quoting,
 counter-offers with turn-taking and expiry, award, status tracking with an
@@ -140,6 +179,7 @@ statistics, rate guidance from platform history where it exists.
 | Documents | Nothing. No BOL/POD upload | Object storage with signed URLs and retention rules |
 | Notifications | Nothing. State changes are visible in-app only | Email/SMS/push provider |
 | Live tracking | Status is what the supplier reports | Telematics or an ELD integration |
+| Floor updates | A 5-second poll, labelled as one | Server-sent events or a WebSocket |
 
 **Before taking money through this, talk to a lawyer.** Whether a platform
 connecting shippers and carriers is acting as a broker — and what authority,

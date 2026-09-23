@@ -5,6 +5,7 @@ import { ApiError, api } from "./api.js";
 import { clear, el, replace, toast } from "./dom.js";
 import { renderAdmin } from "./views/admin.js";
 import { renderAuth } from "./views/auth.js";
+import { renderFloor } from "./views/floor.js";
 import { renderShipment } from "./views/shipment.js";
 import { renderNewShipment, renderShipmentList } from "./views/shipper.js";
 import { renderMyQuotes, renderOpportunities, renderSupplierProfile } from "./views/supplier.js";
@@ -12,6 +13,7 @@ import { renderMyQuotes, renderOpportunities, renderSupplierProfile } from "./vi
 const state = { user: null, company: null, reference: null };
 
 const ROUTES = [
+  { pattern: /^#\/floor$/, roles: ["shipper", "supplier", "admin"], view: renderFloor },
   { pattern: /^#\/shipments\/new$/, roles: ["shipper"], view: renderNewShipment },
   {
     pattern: /^#\/shipments\/([^/]+)$/,
@@ -28,25 +30,38 @@ const ROUTES = [
 
 const NAV = {
   shipper: [
+    { href: "#/floor", label: "Command floor" },
     { href: "#/shipments", label: "Shipments" },
     { href: "#/shipments/new", label: "Post a shipment" },
   ],
   supplier: [
+    { href: "#/floor", label: "Command floor" },
     { href: "#/opportunities", label: "Opportunities" },
     { href: "#/quotes", label: "My quotes" },
     { href: "#/shipments", label: "My shipments" },
     { href: "#/profile", label: "Capabilities" },
   ],
   admin: [
+    { href: "#/floor", label: "Command floor" },
     { href: "#/admin", label: "Platform" },
     { href: "#/shipments", label: "All shipments" },
   ],
 };
 
-const HOME = { shipper: "#/shipments", supplier: "#/opportunities", admin: "#/admin" };
+const HOME = { shipper: "#/floor", supplier: "#/floor", admin: "#/floor" };
 
 const root = document.getElementById("root");
 const bar = document.getElementById("app-bar");
+
+// A view that starts a timer (the floor polls) hangs a teardown on its node;
+// the router stops the old one before the new view replaces it.
+let activeTeardown = null;
+
+function swap(node) {
+  activeTeardown?.();
+  activeTeardown = typeof node?.teardown === "function" ? node.teardown : null;
+  clear(root).append(node);
+}
 
 function navigate(hash) {
   if (window.location.hash === hash) render();
@@ -89,7 +104,7 @@ function signedIn(user) {
 async function render() {
   if (!state.user) {
     bar.hidden = true;
-    clear(root).append(renderAuth({ reference: state.reference, onSignedIn: signedIn }));
+    swap(renderAuth({ reference: state.reference, onSignedIn: signedIn }));
     return;
   }
 
@@ -111,10 +126,9 @@ async function render() {
     params[name] = decodeURIComponent(match.result[index + 1]);
   });
 
-  clear(root).append(el("p", { class: "muted" }, "Loading…"));
+  swap(el("p", { class: "muted" }, "Loading…"));
   try {
-    const node = await match.route.view({ state, params, navigate, refresh });
-    clear(root).append(node);
+    swap(await match.route.view({ state, params, navigate, refresh }));
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       state.user = null;
@@ -122,7 +136,7 @@ async function render() {
       render();
       return;
     }
-    clear(root).append(
+    swap(
       el(
         "div",
         { class: "card" },
