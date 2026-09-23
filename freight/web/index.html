@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Freight Marketplace</title>
+    <meta name="description" content="Post a shipment, compare verified suppliers, negotiate and award." />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <header class="app-bar" id="app-bar" hidden>
+      <div class="app-bar__brand">
+        <span class="mark" aria-hidden="true">FM</span>
+        <span>Freight Marketplace</span>
+      </div>
+      <nav class="app-bar__nav" id="nav"></nav>
+      <div class="app-bar__account" id="account"></div>
+    </header>
+
+    <main id="root" class="shell"></main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <script type="module" src="/js/app.js"></script>
+  </body>
+</html>
