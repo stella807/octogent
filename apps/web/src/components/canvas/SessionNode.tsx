@@ -49,6 +49,8 @@ export const SessionNode = ({ node, isSelected, onPointerDown, onClick }: Sessio
   const isWaiting =
     node.agentRuntimeState === "waiting_for_permission" ||
     node.agentRuntimeState === "waiting_for_user";
+  const isLifecycleAttention =
+    node.agentState === "stale" || node.agentState === "exited" || node.agentState === "stopped";
   const color = isActive ? node.color : "#9ca3af";
   const isWorktree = node.workspaceMode === "worktree" && !node.parentTerminalId;
   const isSwarmWorker = !!node.parentTerminalId;
@@ -61,12 +63,21 @@ export const SessionNode = ({ node, isSelected, onPointerDown, onClick }: Sessio
     if (node.agentRuntimeState === "waiting_for_user") {
       return "WAITING";
     }
+    if (node.agentState === "stale") {
+      return "STALE";
+    }
+    if (node.agentState === "exited") {
+      return "EXITED";
+    }
+    if (node.agentState === "stopped") {
+      return "STOPPED";
+    }
     return "";
-  }, [node.agentRuntimeState, node.waitingToolName]);
+  }, [node.agentRuntimeState, node.agentState, node.waitingToolName]);
 
   const pillWidth = pillLabel.length * PILL_CHAR_WIDTH + PILL_PADDING;
   const pillY = node.radius + 4;
-  const labelYOffset = isWaiting ? PILL_HEIGHT + 6 : 0;
+  const labelYOffset = isWaiting || isLifecycleAttention ? PILL_HEIGHT + 6 : 0;
 
   return (
     <g
@@ -123,28 +134,28 @@ export const SessionNode = ({ node, isSelected, onPointerDown, onClick }: Sessio
         <circle
           className="canvas-node-focus-glow"
           r={node.radius + 12}
-          fill={isWaiting ? "#f59e0b" : "#ffffff"}
+          fill={isWaiting || isLifecycleAttention ? "#f59e0b" : "#ffffff"}
         />
       )}
 
       {/* Subtle glow halo — accent when waiting */}
       <circle
-        className={`canvas-node-bloom${isLive || isWaiting ? " canvas-node-bloom--pulse" : ""}`}
+        className={`canvas-node-bloom${isLive || isWaiting || isLifecycleAttention ? " canvas-node-bloom--pulse" : ""}`}
         r={node.radius + 3}
-        fill={isWaiting ? "#f59e0b" : color}
-        opacity={isWaiting ? 0.45 : isActive ? 0.25 : 0.1}
+        fill={isWaiting || isLifecycleAttention ? "#f59e0b" : color}
+        opacity={isWaiting || isLifecycleAttention ? 0.45 : isActive ? 0.25 : 0.1}
       />
 
       {/* Bright core dot — accent when waiting */}
       <circle
         className="canvas-node-core"
         r={node.radius}
-        fill={isWaiting ? "#f59e0b" : color}
+        fill={isWaiting || isLifecycleAttention ? "#f59e0b" : color}
         opacity={isActive ? 1 : 0.4}
       />
 
-      {/* Waiting indicator pill */}
-      {isWaiting && (
+      {/* State indicator pill */}
+      {(isWaiting || isLifecycleAttention) && (
         <g className="canvas-node-waiting-indicator">
           <rect
             className="canvas-node-waiting-pill"

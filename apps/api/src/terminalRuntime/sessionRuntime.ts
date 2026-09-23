@@ -10,19 +10,27 @@ import { type AgentRuntimeState, AgentStateTracker } from "../agentStateDetectio
 import {
   DEFAULT_AGENT_PROVIDER,
   TERMINAL_BOOTSTRAP_COMMANDS,
+  TERMINAL_MAX_CONCURRENT_SESSIONS,
   TERMINAL_SCROLLBACK_MAX_BYTES,
   TERMINAL_SESSION_IDLE_GRACE_MS,
 } from "./constants";
 import {
   type ConversationTranscriptEvent,
   type ConversationTranscriptEventPayload,
+  type SessionEndTranscriptEvent,
   ensureTranscriptDirectory,
   transcriptFilenameForSession,
 } from "./conversations";
 import { broadcastMessage, getTerminalId, sendMessage } from "./protocol";
 import { createShellEnvironment, ensureNodePtySpawnHelperExecutable } from "./ptyEnvironment";
 import { toErrorMessage } from "./systemClients";
-import type { DirectSessionListener, PersistedTerminal, TerminalSession } from "./types";
+import type {
+  DirectSessionListener,
+  PersistedTerminal,
+  TerminalSession,
+  TerminalSessionEndDetails,
+  TerminalSessionStartDetails,
+} from "./types";
 
 type CreateSessionRuntimeOptions = {
   websocketServer: WebSocketServer;
@@ -38,7 +46,10 @@ type CreateSessionRuntimeOptions = {
   transcriptDirectoryPath: string;
   sessionIdleGraceMs?: number;
   scrollbackMaxBytes?: number;
+  maxConcurrentSessions?: number;
   onStateChange?: (terminalId: string, state: AgentRuntimeState, toolName?: string) => void;
+  onSessionStart?: (terminalId: string, details: TerminalSessionStartDetails) => void;
+  onSessionEnd?: (terminalId: string, details: TerminalSessionEndDetails) => void;
 };
 
 const ANSI_BEL = String.fromCharCode(0x07);
@@ -58,10 +69,16 @@ export const createSessionRuntime = ({
   transcriptDirectoryPath,
   sessionIdleGraceMs = TERMINAL_SESSION_IDLE_GRACE_MS,
   scrollbackMaxBytes = TERMINAL_SCROLLBACK_MAX_BYTES,
+  maxConcurrentSessions = TERMINAL_MAX_CONCURRENT_SESSIONS,
   onStateChange,
+  onSessionStart,
+  onSessionEnd,
 }: CreateSessionRuntimeOptions) => {
   const DEFAULT_PTY_COLS = 120;
   const DEFAULT_PTY_ROWS = 35;
+  const sessionLimit = Number.isFinite(maxConcurrentSessions)
+    ? Math.max(1, Math.floor(maxConcurrentSessions))
+    : TERMINAL_MAX_CONCURRENT_SESSIONS;
 
   const getShellLaunch = () => {
     if (process.platform === "win32") {
@@ -196,6 +213,38 @@ export const createSessionRuntime = ({
     session.idleCloseTimer = undefined;
   };
 
+  const clearPromptTimers = (session: TerminalSession) => {
+    if (!session.promptTimers) {
+      return;
+    }
+
+    for (const timer of session.promptTimers) {
+      clearTimeout(timer);
+    }
+    session.promptTimers.clear();
+  };
+
+  const schedulePromptTimer = (
+    session: TerminalSession,
+    sessionId: string,
+    callback: () => void,
+    delayMs: number,
+  ) => {
+    const timer = setTimeout(() => {
+      session.promptTimers?.delete(timer);
+      if (session.isClosed || sessions.get(sessionId) !== session) {
+        return;
+      }
+
+      callback();
+    }, delayMs);
+
+    if (!session.promptTimers) {
+      session.promptTimers = new Set();
+    }
+    session.promptTimers.add(timer);
+  };
+
   const appendScrollback = (session: TerminalSession, chunk: string) => {
     let nextChunk = chunk;
     let nextChunkBytes = Buffer.byteLength(nextChunk, "utf8");
@@ -264,29 +313,126 @@ export const createSessionRuntime = ({
     });
   };
 
+  const teardownSession = (
+    sessionId: string,
+    session: TerminalSession,
+    event: Omit<SessionEndTranscriptEvent, "eventId" | "sessionId" | "tentacleId">,
+    options: { killPty: boolean; killSignal?: string },
+  ): void => {
+    if (session.isClosed) {
+      return;
+    }
+
+    session.isClosed = true;
+    clearIdleCloseTimer(session);
+    clearPromptTimers(session);
+    closeTranscript(session, sessionId, event);
+    onSessionEnd?.(sessionId, {
+      reason:
+        event.reason === "pty_exit" ||
+        event.reason === "operator_stop" ||
+        event.reason === "operator_kill"
+          ? event.reason
+          : "session_close",
+      endedAt: typeof event.timestamp === "string" ? event.timestamp : new Date().toISOString(),
+      ...(typeof event.exitCode === "number" ? { exitCode: event.exitCode } : {}),
+      ...(typeof event.signal === "number" || typeof event.signal === "string"
+        ? { signal: event.signal }
+        : {}),
+    });
+
+    if (session.statePollTimer) {
+      clearInterval(session.statePollTimer);
+      session.statePollTimer = undefined;
+    }
+
+    for (const disposable of session.ptyDisposables ?? []) {
+      try {
+        disposable.dispose();
+      } catch {
+        // Ignore listener cleanup errors; the PTY teardown below is still required.
+      }
+    }
+    session.ptyDisposables = [];
+
+    if (options.killPty) {
+      try {
+        session.pty.kill(options.killSignal);
+      } catch {
+        // Ignore teardown errors; session will still be discarded.
+      }
+    }
+
+    for (const client of session.clients) {
+      if (client.readyState === 1) {
+        client.close();
+      }
+    }
+    session.clients.clear();
+    session.directListeners.clear();
+    session.debugLog?.end();
+    session.debugLog = undefined;
+
+    if (sessions.get(sessionId) === session) {
+      sessions.delete(sessionId);
+    }
+  };
+
   const closeSession = (sessionId: string): boolean => {
     const session = sessions.get(sessionId);
     if (!session) {
       return false;
     }
 
-    clearIdleCloseTimer(session);
-    closeTranscript(session, sessionId, {
-      type: "session_end",
-      reason: "session_close",
-      timestamp: new Date().toISOString(),
-    });
-    try {
-      session.pty.kill();
-    } catch {
-      // Ignore teardown errors; session will still be discarded.
+    teardownSession(
+      sessionId,
+      session,
+      {
+        type: "session_end",
+        reason: "session_close",
+        timestamp: new Date().toISOString(),
+      },
+      { killPty: true },
+    );
+    return true;
+  };
+
+  const stopSession = (sessionId: string): boolean => {
+    const session = sessions.get(sessionId);
+    if (!session) {
+      return false;
     }
 
-    if (session.statePollTimer) {
-      clearInterval(session.statePollTimer);
+    teardownSession(
+      sessionId,
+      session,
+      {
+        type: "session_end",
+        reason: "operator_stop",
+        timestamp: new Date().toISOString(),
+      },
+      { killPty: true },
+    );
+    return true;
+  };
+
+  const killSession = (sessionId: string, signal = "SIGKILL"): boolean => {
+    const session = sessions.get(sessionId);
+    if (!session) {
+      return false;
     }
-    session.debugLog?.end();
-    sessions.delete(sessionId);
+
+    teardownSession(
+      sessionId,
+      session,
+      {
+        type: "session_end",
+        reason: "operator_kill",
+        signal,
+        timestamp: new Date().toISOString(),
+      },
+      { killPty: true, killSignal: signal },
+    );
     return true;
   };
 
@@ -296,6 +442,10 @@ export const createSessionRuntime = ({
   const BRACKETED_PASTE_END = "\x1b[201~";
 
   const scheduleIdleCloseIfNeeded = (session: TerminalSession, sessionId: string) => {
+    if (session.isClosed || sessions.get(sessionId) !== session) {
+      return;
+    }
+
     if (session.keepAliveWithoutClients) {
       return;
     }
@@ -331,34 +481,46 @@ export const createSessionRuntime = ({
 
     // Schedule initial prompt injection after Claude Code has had time to boot.
     if (session.initialPrompt && !session.isInitialPromptSent) {
-      setTimeout(() => {
-        if (session.isInitialPromptSent) {
-          return;
-        }
-        session.isInitialPromptSent = true;
-        appendDebugLog(session, `initial-prompt session=${sessionId}`);
-        const prompt = session.initialPrompt ?? "";
-        session.pty.write(`${BRACKETED_PASTE_START}${prompt}${BRACKETED_PASTE_END}`);
-        setTimeout(() => {
-          if (sessions.get(sessionId) !== session) {
+      schedulePromptTimer(
+        session,
+        sessionId,
+        () => {
+          if (session.isInitialPromptSent) {
             return;
           }
-          appendDebugLog(session, `initial-prompt-submit session=${sessionId}`);
-          session.pty.write("\r");
-        }, INITIAL_PROMPT_SUBMIT_DELAY_MS);
-      }, INITIAL_PROMPT_DELAY_MS);
+          session.isInitialPromptSent = true;
+          appendDebugLog(session, `initial-prompt session=${sessionId}`);
+          const prompt = session.initialPrompt ?? "";
+          session.pty.write(`${BRACKETED_PASTE_START}${prompt}${BRACKETED_PASTE_END}`);
+          schedulePromptTimer(
+            session,
+            sessionId,
+            () => {
+              appendDebugLog(session, `initial-prompt-submit session=${sessionId}`);
+              session.pty.write("\r");
+            },
+            INITIAL_PROMPT_SUBMIT_DELAY_MS,
+          );
+        },
+        INITIAL_PROMPT_DELAY_MS,
+      );
     }
 
     if (session.initialInputDraft && !session.isInitialInputDraftSent && !session.initialPrompt) {
-      setTimeout(() => {
-        if (session.isInitialInputDraftSent) {
-          return;
-        }
-        session.isInitialInputDraftSent = true;
-        appendDebugLog(session, `initial-input-draft session=${sessionId}`);
-        const draft = session.initialInputDraft ?? "";
-        session.pty.write(`${BRACKETED_PASTE_START}${draft}${BRACKETED_PASTE_END}`);
-      }, INITIAL_PROMPT_DELAY_MS);
+      schedulePromptTimer(
+        session,
+        sessionId,
+        () => {
+          if (session.isInitialInputDraftSent) {
+            return;
+          }
+          session.isInitialInputDraftSent = true;
+          appendDebugLog(session, `initial-input-draft session=${sessionId}`);
+          const draft = session.initialInputDraft ?? "";
+          session.pty.write(`${BRACKETED_PASTE_START}${draft}${BRACKETED_PASTE_END}`);
+        },
+        INITIAL_PROMPT_DELAY_MS,
+      );
     }
   };
 
@@ -366,6 +528,12 @@ export const createSessionRuntime = ({
     const existingSession = sessions.get(sessionId);
     if (existingSession) {
       return existingSession;
+    }
+
+    if (sessions.size >= sessionLimit) {
+      throw new Error(
+        `Terminal session limit reached (${sessionLimit}). Close an existing terminal session or increase OCTOGENT_MAX_TERMINAL_SESSIONS.`,
+      );
     }
 
     const terminalRecord = terminals.get(sessionId);
@@ -420,6 +588,12 @@ export const createSessionRuntime = ({
     session.transcriptLog = transcriptLog;
 
     appendDebugLog(session, `session-start session=${sessionId} tentacle=${tentacleId}`);
+    const processId =
+      typeof pty.pid === "number" && Number.isInteger(pty.pid) && pty.pid > 0 ? pty.pid : undefined;
+    onSessionStart?.(sessionId, {
+      startedAt: new Date().toISOString(),
+      ...(processId ? { processId } : {}),
+    });
     appendTranscriptEvent(session, sessionId, {
       type: "session_start",
       timestamp: new Date().toISOString(),
@@ -428,7 +602,11 @@ export const createSessionRuntime = ({
       emitStateIfChanged(session, sessionId, session.stateTracker.poll(Date.now()));
     }, 300);
 
-    session.pty.onData((chunk) => {
+    const dataDisposable = session.pty.onData((chunk) => {
+      if (session.isClosed) {
+        return;
+      }
+
       appendDebugLog(session, `pty-output session=${sessionId} chunk=${JSON.stringify(chunk)}`);
       appendScrollback(session, chunk);
       const nextState = session.stateTracker.observeChunk(chunk, Date.now());
@@ -439,35 +617,35 @@ export const createSessionRuntime = ({
       emitStateIfChanged(session, sessionId, nextState);
     });
 
-    session.pty.onExit(({ exitCode, signal }) => {
+    const exitDisposable = session.pty.onExit(({ exitCode, signal }) => {
+      if (session.isClosed) {
+        return;
+      }
+
       const message = `\r\n[terminal exited (code ${exitCode}, signal ${signal})]\r\n`;
       broadcastMessage(session, {
         type: "output",
         data: message,
       });
-      for (const client of session.clients) {
-        if (client.readyState === 1) {
-          client.close();
-        }
-      }
 
       appendDebugLog(
         session,
         `session-exit session=${sessionId} code=${exitCode} signal=${signal}`,
       );
-      closeTranscript(session, sessionId, {
-        type: "session_end",
-        reason: "pty_exit",
-        ...(Number.isFinite(exitCode) ? { exitCode } : {}),
-        ...(Number.isFinite(signal) ? { signal } : {}),
-        timestamp: new Date().toISOString(),
-      });
-      if (session.statePollTimer) {
-        clearInterval(session.statePollTimer);
-      }
-      session.debugLog?.end();
-      sessions.delete(sessionId);
+      teardownSession(
+        sessionId,
+        session,
+        {
+          type: "session_end",
+          reason: "pty_exit",
+          ...(Number.isFinite(exitCode) ? { exitCode } : {}),
+          ...(Number.isFinite(signal) ? { signal } : {}),
+          timestamp: new Date().toISOString(),
+        },
+        { killPty: false },
+      );
     });
+    session.ptyDisposables = [dataDisposable, exitDisposable];
 
     // Propagate initial prompt from the terminal definition, if set.
     if (terminalRecord?.initialPrompt) {
@@ -517,6 +695,10 @@ export const createSessionRuntime = ({
       });
 
       websocket.on("message", (raw: unknown) => {
+        if (session.isClosed) {
+          return;
+        }
+
         const text =
           typeof raw === "string" ? raw : raw instanceof Buffer ? raw.toString() : String(raw);
         try {
@@ -561,6 +743,10 @@ export const createSessionRuntime = ({
       });
 
       websocket.on("close", () => {
+        if (session.isClosed) {
+          return;
+        }
+
         session.clients.delete(websocket);
         appendDebugLog(session, `ws-close session=${sessionId} clients=${session.clients.size}`);
         scheduleIdleCloseIfNeeded(session, sessionId);
@@ -604,6 +790,10 @@ export const createSessionRuntime = ({
     listener({ type: "state", state: session.agentState });
 
     return () => {
+      if (session.isClosed) {
+        return;
+      }
+
       session.directListeners.delete(listener);
       scheduleIdleCloseIfNeeded(session, sessionId);
     };
@@ -630,7 +820,7 @@ export const createSessionRuntime = ({
 
   const writeInput = (terminalId: string, data: string): boolean => {
     const session = sessions.get(terminalId);
-    if (!session) {
+    if (!session || session.isClosed) {
       return false;
     }
 
@@ -643,7 +833,7 @@ export const createSessionRuntime = ({
 
   const resizeSession = (terminalId: string, cols: number, rows: number): boolean => {
     const session = sessions.get(terminalId);
-    if (!session) {
+    if (!session || session.isClosed) {
       return false;
     }
 
@@ -659,13 +849,31 @@ export const createSessionRuntime = ({
     return true;
   };
 
+  const releaseSessionKeepAlive = (terminalId: string): boolean => {
+    const session = sessions.get(terminalId);
+    if (!session || session.isClosed) {
+      return false;
+    }
+
+    session.keepAliveWithoutClients = false;
+    scheduleIdleCloseIfNeeded(session, terminalId);
+    return true;
+  };
+
   return {
     closeSession,
+    stopSession,
+    killSession,
     handleUpgrade,
     connectDirect,
     startSession,
     writeInput,
     resizeSession,
+    releaseSessionKeepAlive,
     close,
+    getSessionCapacity: () => ({
+      active: sessions.size,
+      max: sessionLimit,
+    }),
   };
 };

@@ -80,6 +80,7 @@ type CanvasPrimaryViewProps = {
     action: string,
   ) => Promise<string | undefined> | undefined;
   onNavigateToConversation?: (sessionId: string) => void;
+  onCloseActiveSession?: (terminalId: string, terminalName: string, workspaceMode?: string) => void;
   onDeleteActiveSession?: (
     terminalId: string,
     terminalName: string,
@@ -214,6 +215,7 @@ export const CanvasPrimaryView = ({
   onOctobossAction,
   onTentacleAction,
   onNavigateToConversation,
+  onCloseActiveSession,
   onDeleteActiveSession,
   pendingDeleteTerminal,
   isDeletingTerminalId,
@@ -551,7 +553,7 @@ export const CanvasPrimaryView = ({
     setSelectedNodeId((prev) => (prev === nodeId ? null : prev));
   }, []);
 
-  const handleCloseTerminal = useCallback((nodeId: string) => {
+  const handleMinimizeTerminal = useCallback((nodeId: string) => {
     setOpenTerminals((prev) => {
       const next = new Map(prev);
       next.delete(nodeId);
@@ -559,6 +561,22 @@ export const CanvasPrimaryView = ({
     });
     setSelectedNodeId((prev) => (prev === nodeId ? null : prev));
   }, []);
+
+  const handleCloseTerminal = useCallback(
+    (node: GraphNode) => {
+      if (!node.sessionId) {
+        return;
+      }
+
+      const terminal = columns.find((entry) => entry.terminalId === node.sessionId);
+      onCloseActiveSession?.(
+        node.sessionId,
+        terminal?.tentacleName ?? node.label,
+        terminal?.workspaceMode ?? node.workspaceMode,
+      );
+    },
+    [columns, onCloseActiveSession],
+  );
 
   // Divider drag handlers
   const handleDividerPointerDown = useCallback(
@@ -1248,7 +1266,8 @@ export const CanvasPrimaryView = ({
                 layoutVersion={terminalLayoutVersion}
                 isFocused={selectedNodeId === nodeId}
                 panelRef={setPanelRef(nodeId)}
-                onClose={() => handleCloseTerminal(nodeId)}
+                onMinimize={() => handleMinimizeTerminal(nodeId)}
+                onClose={() => handleCloseTerminal(node)}
                 onFocus={() => setSelectedNodeId(nodeId)}
                 onTerminalRenamed={onTerminalRenamed}
                 onTerminalActivity={onTerminalActivity}

@@ -9,6 +9,7 @@ import type {
   PersistedTerminal,
   PersistedUiState,
   TentacleWorkspaceMode,
+  TerminalLifecycleState,
   TerminalNameOrigin,
   TerminalRegistryDocument,
 } from "./types";
@@ -26,6 +27,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const isTerminalNameOrigin = (value: unknown): value is TerminalNameOrigin =>
   value === "generated" || value === "user" || value === "prompt";
+
+const isTerminalLifecycleState = (value: unknown): value is TerminalLifecycleState =>
+  value === "registered" ||
+  value === "running" ||
+  value === "stopped" ||
+  value === "exited" ||
+  value === "stale";
 
 const inferTerminalNameOrigin = (terminalId: string, tentacleName: string): TerminalNameOrigin => {
   if (tentacleName === terminalId || /^Octogent Terminal \d+$/.test(tentacleName)) {
@@ -267,6 +275,33 @@ const parseV3Terminals = (
       terminal.autoRenamePromptContext = entry.autoRenamePromptContext;
     }
     if (typeof entry.lastActiveAt === "string") terminal.lastActiveAt = entry.lastActiveAt;
+    if (isTerminalLifecycleState(entry.lifecycleState)) {
+      terminal.lifecycleState = entry.lifecycleState;
+    }
+    if (typeof entry.lifecycleReason === "string") {
+      terminal.lifecycleReason = entry.lifecycleReason;
+    }
+    if (typeof entry.lifecycleUpdatedAt === "string") {
+      terminal.lifecycleUpdatedAt = entry.lifecycleUpdatedAt;
+    }
+    if (
+      typeof entry.processId === "number" &&
+      Number.isInteger(entry.processId) &&
+      entry.processId > 0
+    ) {
+      terminal.processId = entry.processId;
+    }
+    if (typeof entry.startedAt === "string") terminal.startedAt = entry.startedAt;
+    if (typeof entry.endedAt === "string") terminal.endedAt = entry.endedAt;
+    if (typeof entry.exitCode === "number" && Number.isFinite(entry.exitCode)) {
+      terminal.exitCode = entry.exitCode;
+    }
+    if (
+      (typeof entry.exitSignal === "number" && Number.isFinite(entry.exitSignal)) ||
+      typeof entry.exitSignal === "string"
+    ) {
+      terminal.exitSignal = entry.exitSignal;
+    }
     terminals.set(terminalId, terminal);
   }
 

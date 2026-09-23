@@ -129,12 +129,22 @@ vi.mock("../src/components/canvas/CanvasTerminalColumn", () => ({
   CanvasTerminalColumn: ({
     node,
     panelRef,
+    onMinimize,
+    onClose,
   }: {
     node: (typeof nodes)[number];
     panelRef?: ((element: HTMLElement | null) => void) | undefined;
+    onMinimize?: () => void;
+    onClose?: () => void;
   }) => (
     <section ref={panelRef} data-testid={`panel-${node.id}`} tabIndex={-1}>
       panel {node.id} label {node.label}
+      <button type="button" onClick={onMinimize}>
+        Minimize terminal panel
+      </button>
+      <button type="button" onClick={onClose}>
+        Close terminal session
+      </button>
     </section>
   ),
 }));
@@ -184,6 +194,48 @@ describe("CanvasPrimaryView", () => {
       expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
       expect(HTMLElement.prototype.focus).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("minimizes a terminal panel separately from closing the terminal session", async () => {
+    const onCloseActiveSession = vi.fn();
+    render(
+      <CanvasPrimaryView
+        columns={[
+          {
+            terminalId: "terminal-1",
+            label: "terminal-1",
+            state: "live",
+            tentacleId: "tentacle-a",
+            tentacleName: "terminal one",
+            workspaceMode: "shared",
+            createdAt: "2026-02-24T10:00:00.000Z",
+          },
+        ]}
+        isUiStateHydrated
+        onCloseActiveSession={onCloseActiveSession}
+      />,
+    );
+
+    const [terminalButton] = screen.getAllByRole("button", { name: "terminal-1" });
+    expect(terminalButton).toBeDefined();
+    if (!terminalButton) throw new Error("Missing terminal button");
+
+    fireEvent.click(terminalButton);
+    await waitFor(() => {
+      expect(screen.getByTestId("panel-a:terminal-1")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Minimize terminal panel" }));
+    expect(screen.queryByTestId("panel-a:terminal-1")).not.toBeInTheDocument();
+    expect(onCloseActiveSession).not.toHaveBeenCalled();
+
+    fireEvent.click(terminalButton);
+    await waitFor(() => {
+      expect(screen.getByTestId("panel-a:terminal-1")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Close terminal session" }));
+    expect(onCloseActiveSession).toHaveBeenCalledWith("terminal-1", "terminal one", "shared");
   });
 
   it("auto-opens a newly created child terminal when its parent panel is already open", async () => {

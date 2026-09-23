@@ -58,7 +58,9 @@ import {
   readHeaderValue,
 } from "./security";
 import {
+  handleTerminalActionRoute,
   handleTerminalItemRoute,
+  handleTerminalPruneRoute,
   handleTerminalSnapshotsRoute,
   handleTerminalsCollectionRoute,
 } from "./terminalRoutes";
@@ -141,7 +143,15 @@ const API_ROUTE_MAP: ReadonlyMap<string, readonly ApiRouteHandler[]> = new Map([
       handleConversationItemRoute,
     ],
   ],
-  ["terminals", [handleTerminalsCollectionRoute, handleTerminalItemRoute]],
+  [
+    "terminals",
+    [
+      handleTerminalsCollectionRoute,
+      handleTerminalPruneRoute,
+      handleTerminalActionRoute,
+      handleTerminalItemRoute,
+    ],
+  ],
   ["tentacles", [handleTentacleGitRoute, handleTentacleGitPullRequestRoute]],
   ["code-intel", [handleCodeIntelEventsRoute]],
 ]);

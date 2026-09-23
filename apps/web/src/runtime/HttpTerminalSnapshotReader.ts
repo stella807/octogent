@@ -21,7 +21,20 @@ type HttpTerminalSnapshotReaderOptions = {
 };
 
 const isAgentState = (value: unknown): value is AgentState =>
-  value === "live" || value === "idle" || value === "queued" || value === "blocked";
+  value === "live" ||
+  value === "idle" ||
+  value === "queued" ||
+  value === "blocked" ||
+  value === "stopped" ||
+  value === "exited" ||
+  value === "stale";
+
+const isLifecycleState = (value: unknown) =>
+  value === "registered" ||
+  value === "running" ||
+  value === "stopped" ||
+  value === "exited" ||
+  value === "stale";
 
 const isTerminalSnapshot = (value: unknown): value is TerminalSnapshot => {
   if (typeof value !== "object" || value === null) {
@@ -39,7 +52,18 @@ const isTerminalSnapshot = (value: unknown): value is TerminalSnapshot => {
     (snapshot.workspaceMode === undefined ||
       snapshot.workspaceMode === "shared" ||
       snapshot.workspaceMode === "worktree") &&
-    typeof snapshot.createdAt === "string"
+    typeof snapshot.createdAt === "string" &&
+    (snapshot.lifecycleState === undefined || isLifecycleState(snapshot.lifecycleState)) &&
+    (snapshot.lifecycleReason === undefined || typeof snapshot.lifecycleReason === "string") &&
+    (snapshot.lifecycleUpdatedAt === undefined ||
+      typeof snapshot.lifecycleUpdatedAt === "string") &&
+    (snapshot.processId === undefined || typeof snapshot.processId === "number") &&
+    (snapshot.startedAt === undefined || typeof snapshot.startedAt === "string") &&
+    (snapshot.endedAt === undefined || typeof snapshot.endedAt === "string") &&
+    (snapshot.exitCode === undefined || typeof snapshot.exitCode === "number") &&
+    (snapshot.exitSignal === undefined ||
+      typeof snapshot.exitSignal === "number" ||
+      typeof snapshot.exitSignal === "string")
   );
 };
 

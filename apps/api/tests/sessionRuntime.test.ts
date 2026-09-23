@@ -51,6 +51,10 @@ class FakePty extends EventEmitter {
   emitData(chunk: string) {
     this.emit("data", chunk);
   }
+
+  emitExit(event: { exitCode: number; signal: number }) {
+    this.emit("exit", event);
+  }
 }
 
 class FakeWebSocket extends EventEmitter {
@@ -229,6 +233,244 @@ describe("createSessionRuntime", () => {
     vi.advanceTimersByTime(1);
     expect(pty.kill).toHaveBeenCalledTimes(1);
     expect(sessions.has(tentacleId)).toBe(false);
+
+    runtime.close();
+  });
+
+  it("disposes PTY subscriptions when a session is closed", () => {
+    const tentacleId = "tentacle-1";
+    const terminals = new Map<string, PersistedTerminal>([
+      [
+        tentacleId,
+        {
+          terminalId: tentacleId,
+          tentacleId,
+          tentacleName: tentacleId,
+          createdAt: new Date().toISOString(),
+          workspaceMode: "shared",
+        },
+      ],
+    ]);
+    const sessions = new Map<string, TerminalSession>();
+    const websocketServer = new FakeWebSocketServer();
+    const pty = new FakePty();
+    const transcriptDirectoryPath = createTemporaryDirectory();
+    spawnMock.mockReturnValue(pty);
+
+    const runtime = createSessionRuntime({
+      websocketServer: websocketServer as unknown as import("ws").WebSocketServer,
+      terminals,
+      sessions,
+      getTentacleWorkspaceCwd: () => process.cwd(),
+      isDebugPtyLogsEnabled: false,
+      ptyLogDir: process.cwd(),
+      transcriptDirectoryPath,
+      sessionIdleGraceMs: 60_000,
+      scrollbackMaxBytes: 1024,
+    });
+
+    expect(runtime.startSession(tentacleId)).toBe(true);
+    expect(pty.listenerCount("data")).toBe(1);
+    expect(pty.listenerCount("exit")).toBe(1);
+
+    expect(runtime.closeSession(tentacleId)).toBe(true);
+
+    expect(pty.kill).toHaveBeenCalledTimes(1);
+    expect(pty.listenerCount("data")).toBe(0);
+    expect(pty.listenerCount("exit")).toBe(0);
+    expect(sessions.has(tentacleId)).toBe(false);
+
+    runtime.close();
+  });
+
+  it("clears delayed prompt timers when a prompted session is closed", () => {
+    vi.useFakeTimers();
+
+    const tentacleId = "tentacle-1";
+    const terminals = new Map<string, PersistedTerminal>([
+      [
+        tentacleId,
+        {
+          terminalId: tentacleId,
+          tentacleId,
+          tentacleName: tentacleId,
+          createdAt: new Date().toISOString(),
+          workspaceMode: "shared",
+          initialPrompt: "Investigate and report back.",
+        },
+      ],
+    ]);
+    const sessions = new Map<string, TerminalSession>();
+    const websocketServer = new FakeWebSocketServer();
+    const pty = new FakePty();
+    const transcriptDirectoryPath = createTemporaryDirectory();
+    spawnMock.mockReturnValue(pty);
+
+    const runtime = createSessionRuntime({
+      websocketServer: websocketServer as unknown as import("ws").WebSocketServer,
+      terminals,
+      sessions,
+      getTentacleWorkspaceCwd: () => process.cwd(),
+      isDebugPtyLogsEnabled: false,
+      ptyLogDir: process.cwd(),
+      transcriptDirectoryPath,
+      sessionIdleGraceMs: 60_000,
+      scrollbackMaxBytes: 1024,
+    });
+
+    expect(runtime.startSession(tentacleId)).toBe(true);
+    expect(pty.write).toHaveBeenNthCalledWith(1, "claude\r");
+
+    expect(runtime.closeSession(tentacleId)).toBe(true);
+    vi.advanceTimersByTime(10_000);
+
+    expect(pty.write).toHaveBeenCalledTimes(1);
+    expect(sessions.has(tentacleId)).toBe(false);
+
+    runtime.close();
+  });
+
+  it("releases headless prompted sessions after keepalive is dropped", () => {
+    vi.useFakeTimers();
+
+    const tentacleId = "tentacle-1";
+    const terminals = new Map<string, PersistedTerminal>([
+      [
+        tentacleId,
+        {
+          terminalId: tentacleId,
+          tentacleId,
+          tentacleName: tentacleId,
+          createdAt: new Date().toISOString(),
+          workspaceMode: "shared",
+          initialPrompt: "Investigate and report back.",
+        },
+      ],
+    ]);
+    const sessions = new Map<string, TerminalSession>();
+    const websocketServer = new FakeWebSocketServer();
+    const pty = new FakePty();
+    const transcriptDirectoryPath = createTemporaryDirectory();
+    spawnMock.mockReturnValue(pty);
+
+    const runtime = createSessionRuntime({
+      websocketServer: websocketServer as unknown as import("ws").WebSocketServer,
+      terminals,
+      sessions,
+      getTentacleWorkspaceCwd: () => process.cwd(),
+      isDebugPtyLogsEnabled: false,
+      ptyLogDir: process.cwd(),
+      transcriptDirectoryPath,
+      sessionIdleGraceMs: 1_000,
+      scrollbackMaxBytes: 1024,
+    });
+
+    expect(runtime.startSession(tentacleId)).toBe(true);
+    vi.advanceTimersByTime(10_000);
+    expect(sessions.has(tentacleId)).toBe(true);
+
+    expect(runtime.releaseSessionKeepAlive(tentacleId)).toBe(true);
+    vi.advanceTimersByTime(999);
+    expect(sessions.has(tentacleId)).toBe(true);
+
+    vi.advanceTimersByTime(1);
+    expect(pty.kill).toHaveBeenCalledTimes(1);
+    expect(sessions.has(tentacleId)).toBe(false);
+
+    runtime.close();
+  });
+
+  it("removes exited sessions without killing the already-exited PTY", () => {
+    const tentacleId = "tentacle-1";
+    const terminals = new Map<string, PersistedTerminal>([
+      [
+        tentacleId,
+        {
+          terminalId: tentacleId,
+          tentacleId,
+          tentacleName: tentacleId,
+          createdAt: new Date().toISOString(),
+          workspaceMode: "shared",
+        },
+      ],
+    ]);
+    const sessions = new Map<string, TerminalSession>();
+    const websocketServer = new FakeWebSocketServer();
+    const pty = new FakePty();
+    const transcriptDirectoryPath = createTemporaryDirectory();
+    spawnMock.mockReturnValue(pty);
+
+    const runtime = createSessionRuntime({
+      websocketServer: websocketServer as unknown as import("ws").WebSocketServer,
+      terminals,
+      sessions,
+      getTentacleWorkspaceCwd: () => process.cwd(),
+      isDebugPtyLogsEnabled: false,
+      ptyLogDir: process.cwd(),
+      transcriptDirectoryPath,
+      sessionIdleGraceMs: 60_000,
+      scrollbackMaxBytes: 1024,
+    });
+
+    expect(runtime.startSession(tentacleId)).toBe(true);
+    pty.emitExit({ exitCode: 0, signal: 0 });
+
+    expect(pty.kill).not.toHaveBeenCalled();
+    expect(pty.listenerCount("data")).toBe(0);
+    expect(pty.listenerCount("exit")).toBe(0);
+    expect(sessions.has(tentacleId)).toBe(false);
+
+    runtime.close();
+  });
+
+  it("enforces the configured max concurrent terminal sessions before spawning", () => {
+    const terminals = new Map<string, PersistedTerminal>([
+      [
+        "tentacle-1",
+        {
+          terminalId: "tentacle-1",
+          tentacleId: "tentacle-1",
+          tentacleName: "tentacle-1",
+          createdAt: new Date().toISOString(),
+          workspaceMode: "shared",
+        },
+      ],
+      [
+        "tentacle-2",
+        {
+          terminalId: "tentacle-2",
+          tentacleId: "tentacle-2",
+          tentacleName: "tentacle-2",
+          createdAt: new Date().toISOString(),
+          workspaceMode: "shared",
+        },
+      ],
+    ]);
+    const sessions = new Map<string, TerminalSession>();
+    const websocketServer = new FakeWebSocketServer();
+    const firstPty = new FakePty();
+    const transcriptDirectoryPath = createTemporaryDirectory();
+    spawnMock.mockReturnValue(firstPty);
+
+    const runtime = createSessionRuntime({
+      websocketServer: websocketServer as unknown as import("ws").WebSocketServer,
+      terminals,
+      sessions,
+      getTentacleWorkspaceCwd: () => process.cwd(),
+      isDebugPtyLogsEnabled: false,
+      ptyLogDir: process.cwd(),
+      transcriptDirectoryPath,
+      sessionIdleGraceMs: 60_000,
+      scrollbackMaxBytes: 1024,
+      maxConcurrentSessions: 1,
+    });
+
+    expect(runtime.startSession("tentacle-1")).toBe(true);
+    expect(runtime.startSession("tentacle-2")).toBe(false);
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(sessions.has("tentacle-1")).toBe(true);
+    expect(sessions.has("tentacle-2")).toBe(false);
 
     runtime.close();
   });
@@ -602,6 +844,73 @@ describe("createSessionRuntime", () => {
     socket.emit("message", JSON.stringify({ type: "input", data: "echo hi\r" }));
 
     expect(onStateChange).toHaveBeenCalledWith(tentacleId, "processing", undefined);
+
+    runtime.close();
+  });
+
+  it("reports session lifecycle start and exit through callbacks", () => {
+    const tentacleId = "tentacle-1";
+    const terminals = new Map<string, PersistedTerminal>([
+      [
+        tentacleId,
+        {
+          terminalId: tentacleId,
+          tentacleId,
+          tentacleName: tentacleId,
+          createdAt: new Date().toISOString(),
+          workspaceMode: "shared",
+        },
+      ],
+    ]);
+    const sessions = new Map<string, TerminalSession>();
+    const websocketServer = new FakeWebSocketServer();
+    const pty = new FakePty();
+    Object.defineProperty(pty, "pid", { value: 3210 });
+    const transcriptDirectoryPath = createTemporaryDirectory();
+    const onSessionStart = vi.fn();
+    const onSessionEnd = vi.fn();
+    spawnMock.mockReturnValue(pty);
+
+    const runtime = createSessionRuntime({
+      websocketServer: websocketServer as unknown as import("ws").WebSocketServer,
+      terminals,
+      sessions,
+      getTentacleWorkspaceCwd: () => process.cwd(),
+      isDebugPtyLogsEnabled: false,
+      ptyLogDir: process.cwd(),
+      transcriptDirectoryPath,
+      sessionIdleGraceMs: 60_000,
+      scrollbackMaxBytes: 1024,
+      onSessionStart,
+      onSessionEnd,
+    });
+
+    const socket = new FakeWebSocket();
+    websocketServer.nextSocket = socket;
+    expect(
+      runtime.handleUpgrade(createUpgradeRequest(tentacleId), {} as Duplex, Buffer.alloc(0)),
+    ).toBe(true);
+
+    expect(onSessionStart).toHaveBeenCalledWith(
+      tentacleId,
+      expect.objectContaining({
+        processId: 3210,
+        startedAt: expect.any(String),
+      }),
+    );
+
+    pty.emit("exit", { exitCode: 7, signal: 0 });
+
+    expect(onSessionEnd).toHaveBeenCalledWith(
+      tentacleId,
+      expect.objectContaining({
+        reason: "pty_exit",
+        exitCode: 7,
+        signal: 0,
+        endedAt: expect.any(String),
+      }),
+    );
+    expect(sessions.has(tentacleId)).toBe(false);
 
     runtime.close();
   });

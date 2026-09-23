@@ -13,10 +13,13 @@ describe("HttpTerminalSnapshotReader", () => {
           {
             terminalId: "agent-1",
             label: "root-a",
-            state: "live",
+            state: "stale",
             tentacleId: "tentacle-a",
             tentacleName: "planner",
             createdAt: "2026-02-24T10:00:00.000Z",
+            lifecycleState: "stale",
+            lifecycleReason: "missing_process",
+            processId: 99999999,
           },
           {
             label: "invalid-entry",
@@ -29,10 +32,13 @@ describe("HttpTerminalSnapshotReader", () => {
       {
         terminalId: "agent-1",
         label: "root-a",
-        state: "live",
+        state: "stale",
         tentacleId: "tentacle-a",
         tentacleName: "planner",
         createdAt: "2026-02-24T10:00:00.000Z",
+        lifecycleState: "stale",
+        lifecycleReason: "missing_process",
+        processId: 99999999,
       },
     ]);
   });

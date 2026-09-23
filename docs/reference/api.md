@@ -2,13 +2,27 @@
 
 Octogent exposes a local HTTP and WebSocket API.
 
+The API has two different kinds of state:
+
+- persisted project state, such as terminal records, Deck metadata, UI state, and transcripts
+- in-memory runtime state, such as live PTYs, attached WebSockets, scrollback, and channel queues
+
+Most HTTP routes either read/write persisted files or create runtime records. WebSocket routes attach clients to live PTY sessions owned by the API process.
+
 ## Terminals
 
 - `GET /api/terminal-snapshots` - returns the current terminal list and snapshot state for the UI
 - `POST /api/terminals` - creates a new terminal session
+- `POST /api/terminals/prune` - removes terminal records with `stale`, `stopped`, or `exited` lifecycle state
 - `PATCH /api/terminals/:terminalId` - updates terminal metadata such as the display name
 - `DELETE /api/terminals/:terminalId` - removes a terminal and closes its active session
+- `POST /api/terminals/:terminalId/stop` - stops an active session or recorded stale process
+- `POST /api/terminals/:terminalId/kill` - kills an active session or recorded stale process
 - `WS /api/terminals/:terminalId/ws` - streams live terminal IO over WebSocket
+
+Terminal snapshots include `lifecycleState` when known. Supported lifecycle states are `registered`, `running`, `stopped`, `exited`, and `stale`. Stale terminals are records that were persisted as running but could not be reattached to a live Octogent PTY session after startup.
+
+Creating a terminal registers metadata first. A PTY starts immediately only when an initial prompt is provided, a WebSocket attaches, or an internal direct listener starts the session. Worktree terminals also create their worktree before the terminal record is exposed.
 
 ## Git and worktrees
 
@@ -33,6 +47,8 @@ Octogent exposes a local HTTP and WebSocket API.
 - `GET /api/deck/tentacles/:tentacleId/files/:filename` - reads one markdown file from the tentacle vault
 - `POST /api/deck/tentacles/:tentacleId/swarm` - spawns worker terminals from incomplete todo items
 
+Deck routes treat `.octogent/tentacles/<tentacle-id>/` as the source of truth for agent-facing context. Todo operations update `todo.md` by parsed item index. Swarm operations derive worker assignments from incomplete parsed todo items.
+
 ## Prompts
 
 - `GET /api/prompts` - lists available prompt templates
@@ -45,6 +61,8 @@ Octogent exposes a local HTTP and WebSocket API.
 
 - `GET /api/channels/:terminalId/messages` - lists messages for one terminal channel
 - `POST /api/channels/:terminalId/messages` - sends a message to one terminal channel
+
+Channel messages are queued in memory. The POST body provides `fromTerminalId` and `content`; delivery injects pending messages into the target terminal input when the target session is idle.
 
 ## Code intel
 

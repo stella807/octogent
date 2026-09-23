@@ -611,6 +611,12 @@ export const App = () => {
               onNavigateToConversation: (_sessionId) => {
                 setActivePrimaryNav(6);
               },
+              onCloseActiveSession: (terminalId, terminalName, workspaceMode) => {
+                requestDeleteTerminal(terminalId, terminalName, {
+                  workspaceMode: workspaceMode === "worktree" ? "worktree" : "shared",
+                  intent: "close-terminal",
+                });
+              },
               onDeleteActiveSession: (terminalId, terminalName, workspaceMode) => {
                 requestDeleteTerminal(terminalId, terminalName, {
                   workspaceMode: workspaceMode === "worktree" ? "worktree" : "shared",

@@ -58,11 +58,38 @@ Options:
 - `--prompt-template`: prompt template name
 - `--prompt-variables`: JSON object of prompt template variables
 
+## List terminals
+
+```bash
+octogent terminal list
+```
+
+Shows each terminal ID, lifecycle state, recorded process ID when available, lifecycle reason, and display name.
+
+## Stop or kill a terminal
+
+```bash
+octogent terminal stop <terminal-id>
+octogent terminal kill <terminal-id>
+```
+
+`stop` closes an active session or sends `SIGTERM` to the recorded process for a stale terminal. `kill` uses `SIGKILL`.
+
+## Prune inactive terminal records
+
+```bash
+octogent terminal prune
+```
+
+Removes terminal records whose lifecycle state is `stale`, `stopped`, or `exited`. It does not remove active sessions.
+
 ## Send a message
 
 ```bash
 octogent channel send <terminal-id> "message"
 ```
+
+Use `--from <terminal-id>` when sending on behalf of a worker or parent terminal. If `--from` is omitted, the CLI falls back to `OCTOGENT_SESSION_ID` when the command is running inside an Octogent-managed terminal.
 
 ## List messages
 

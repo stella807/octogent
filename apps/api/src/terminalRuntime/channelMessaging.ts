@@ -10,20 +10,20 @@ export const createChannelMessaging = (deps: {
   const channelQueues = new Map<string, ChannelMessage[]>();
   let channelMessageCounter = 0;
 
-  const deliverChannelMessages = (terminalId: string): void => {
+  const deliverChannelMessages = (terminalId: string): number => {
     const queue = channelQueues.get(terminalId);
     if (!queue || queue.length === 0) {
-      return;
+      return 0;
     }
 
     const session = sessions.get(terminalId);
     if (!session) {
-      return;
+      return 0;
     }
 
     const undelivered = queue.filter((m) => !m.delivered);
     if (undelivered.length === 0) {
-      return;
+      return 0;
     }
 
     // Compose all pending messages into a single prompt injection.
@@ -39,6 +39,7 @@ export const createChannelMessaging = (deps: {
     }
 
     writeInput(terminalId, prompt);
+    return undelivered.length;
   };
 
   return {

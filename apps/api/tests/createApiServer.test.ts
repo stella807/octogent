@@ -3204,4 +3204,112 @@ describe("createApiServer", () => {
       ]),
     );
   });
+
+  it("marks persisted running terminals as stale when the API starts without their session", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    const registryPath = join(workspaceCwd, ".octogent", "state", "tentacles.json");
+    mkdirSync(join(workspaceCwd, ".octogent", "state"), { recursive: true });
+    writeFileSync(
+      registryPath,
+      `${JSON.stringify(
+        {
+          version: 3,
+          terminals: [
+            {
+              terminalId: "terminal-1",
+              tentacleId: "terminal-1",
+              tentacleName: "planner",
+              createdAt: "2026-04-09T10:00:00.000Z",
+              workspaceMode: "shared",
+              lifecycleState: "running",
+              processId: 99999999,
+              lifecycleUpdatedAt: "2026-04-09T10:01:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const baseUrl = await startServer({ workspaceCwd });
+
+    const listResponse = await fetch(`${baseUrl}/api/terminal-snapshots`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+
+    expect(listResponse.status).toBe(200);
+    await expect(listResponse.json()).resolves.toEqual([
+      expect.objectContaining({
+        terminalId: "terminal-1",
+        state: "stale",
+        lifecycleState: "stale",
+        lifecycleReason: "missing_process",
+        processId: 99999999,
+      }),
+    ]);
+  });
+
+  it("stops and prunes stale terminal records through lifecycle endpoints", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    const registryPath = join(workspaceCwd, ".octogent", "state", "tentacles.json");
+    mkdirSync(join(workspaceCwd, ".octogent", "state"), { recursive: true });
+    writeFileSync(
+      registryPath,
+      `${JSON.stringify(
+        {
+          version: 3,
+          terminals: [
+            {
+              terminalId: "terminal-1",
+              tentacleId: "terminal-1",
+              tentacleName: "planner",
+              createdAt: "2026-04-09T10:00:00.000Z",
+              workspaceMode: "shared",
+              lifecycleState: "running",
+              processId: 99999999,
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const baseUrl = await startServer({ workspaceCwd });
+
+    const stopResponse = await fetch(`${baseUrl}/api/terminals/terminal-1/stop`, {
+      method: "POST",
+      headers: { Accept: "application/json" },
+    });
+    expect(stopResponse.status).toBe(200);
+    await expect(stopResponse.json()).resolves.toEqual(
+      expect.objectContaining({
+        terminalId: "terminal-1",
+        lifecycleState: "stopped",
+        lifecycleReason: "operator_stop",
+      }),
+    );
+
+    const pruneResponse = await fetch(`${baseUrl}/api/terminals/prune`, {
+      method: "POST",
+      headers: { Accept: "application/json" },
+    });
+    expect(pruneResponse.status).toBe(200);
+    await expect(pruneResponse.json()).resolves.toEqual({
+      prunedTerminalIds: ["terminal-1"],
+    });
+
+    const listResponse = await fetch(`${baseUrl}/api/terminal-snapshots`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    expect(listResponse.status).toBe(200);
+    await expect(listResponse.json()).resolves.toEqual([]);
+  });
 });

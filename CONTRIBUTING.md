@@ -1,6 +1,6 @@
 # Contributing
 
-Octogent is an experimental personal project. Contributions are welcome, but the bar is accuracy over volume. Keep changes small, test-backed, and easy to review.
+Octogent is an experimental personal project and is not actively reviewing pull requests right now. If you still open one, keep changes small, test-backed, and easy to review.
 
 ## Before you change anything
 
@@ -56,10 +56,12 @@ Use `pnpm format` if you need to rewrite formatting.
 
 ## Pull request expectations
 
+- understand that pull requests are not actively reviewed right now
 - explain the problem in one short paragraph
 - explain the behavior change in concrete terms
 - mention any persistence, API, or workflow impact
 - include screenshots for visible UI changes
+- disclose which coding agent and model were used if any code was written with AI
 - call out missing follow-up work explicitly instead of hiding it
 
 ## Areas that matter most right now

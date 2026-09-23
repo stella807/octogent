@@ -20,6 +20,7 @@ export const DeleteTentacleDialog = ({
   const isCleanupIntent =
     pendingDeleteTerminal.intent === "cleanup-worktree" &&
     pendingDeleteTerminal.workspaceMode === "worktree";
+  const isCloseIntent = pendingDeleteTerminal.intent === "close-terminal";
   const isCleanupConfirmationValid =
     !isCleanupIntent || cleanupConfirmationInput.trim() === pendingDeleteTerminal.terminalId;
   const isDeleting = isDeletingTerminalId !== null;
@@ -33,13 +34,24 @@ export const DeleteTentacleDialog = ({
 
   return (
     <ConfirmationDialog
-      title={isCleanupIntent ? "Cleanup Worktree Tentacle" : "Delete Tentacle"}
-      ariaLabel={`Delete confirmation for ${pendingDeleteTerminal.terminalId}`}
+      title={
+        isCleanupIntent
+          ? "Cleanup Worktree Tentacle"
+          : isCloseIntent
+            ? "Close Terminal"
+            : "Delete Tentacle"
+      }
+      ariaLabel={`${isCloseIntent ? "Close" : "Delete"} confirmation for ${pendingDeleteTerminal.terminalId}`}
       message={
         isCleanupIntent ? (
           <>
             Cleanup <strong>{pendingDeleteTerminal.tentacleName}</strong> and delete the tentacle
             session metadata.
+          </>
+        ) : isCloseIntent ? (
+          <>
+            Close <strong>{pendingDeleteTerminal.tentacleName}</strong> and terminate its active
+            terminal session.
           </>
         ) : (
           <>
@@ -51,9 +63,19 @@ export const DeleteTentacleDialog = ({
       warning={
         isCleanupIntent
           ? "This action removes the worktree directory and local branch."
-          : "This action cannot be undone."
+          : isCloseIntent
+            ? "The transcript is preserved as an inactive session."
+            : "This action cannot be undone."
       }
-      confirmLabel={isThisDeleting ? "Deleting..." : isCleanupIntent ? "Cleanup" : "Delete"}
+      confirmLabel={
+        isThisDeleting
+          ? "Closing..."
+          : isCleanupIntent
+            ? "Cleanup"
+            : isCloseIntent
+              ? "Close"
+              : "Delete"
+      }
       isConfirmDisabled={isDeleting || !isCleanupConfirmationValid}
       isBusy={isDeleting}
       cancelAriaLabel="Cancel delete"

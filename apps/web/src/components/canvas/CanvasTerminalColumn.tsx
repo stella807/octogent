@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { Minus, X } from "lucide-react";
 import { type Ref, useCallback, useState } from "react";
 
 import type { GraphNode } from "../../app/canvas/types";
@@ -11,6 +11,7 @@ type CanvasTerminalColumnProps = {
   terminals: TerminalView;
   layoutVersion?: string | number;
   isFocused?: boolean;
+  onMinimize: () => void;
   onClose: () => void;
   onFocus?: () => void;
   panelRef?: Ref<HTMLElement> | undefined;
@@ -23,6 +24,7 @@ export const CanvasTerminalColumn = ({
   terminals,
   layoutVersion,
   isFocused,
+  onMinimize,
   onClose,
   onFocus,
   panelRef,
@@ -66,9 +68,19 @@ export const CanvasTerminalColumn = ({
           <AgentStateBadge state={agentState} />
           <button
             type="button"
+            className="canvas-terminal-column-minimize"
+            onClick={onMinimize}
+            aria-label="Minimize terminal panel"
+            title="Minimize terminal panel"
+          >
+            <Minus size={14} />
+          </button>
+          <button
+            type="button"
             className="canvas-terminal-column-close"
             onClick={onClose}
-            aria-label="Close terminal"
+            aria-label="Close terminal session"
+            title="Close terminal session"
           >
             <X size={14} />
           </button>

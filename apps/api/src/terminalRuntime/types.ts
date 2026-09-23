@@ -7,6 +7,7 @@ import type {
   TentaclePullRequestSnapshot,
   TentacleWorkspaceMode,
   TerminalAgentProvider,
+  TerminalLifecycleState,
 } from "@octogent/core";
 import { isTerminalAgentProvider, isTerminalCompletionSoundId } from "@octogent/core";
 import type { IPty } from "node-pty";
@@ -48,10 +49,15 @@ export type TerminalServerMessage =
 
 export type DirectSessionListener = (message: TerminalServerMessage) => void;
 
+export type Disposable = {
+  dispose: () => void;
+};
+
 export type TerminalSession = {
   terminalId: string;
   tentacleId: string;
   pty: IPty;
+  ptyDisposables?: Disposable[];
   clients: Set<WebSocket>;
   directListeners: Set<DirectSessionListener>;
   cols: number;
@@ -61,9 +67,10 @@ export type TerminalSession = {
   isBootstrapCommandSent: boolean;
   scrollbackChunks: string[];
   scrollbackBytes: number;
-  statePollTimer?: ReturnType<typeof setInterval>;
+  statePollTimer?: ReturnType<typeof setInterval> | undefined;
   idleCloseTimer?: ReturnType<typeof setTimeout> | undefined;
-  debugLog?: WriteStream;
+  promptTimers?: Set<ReturnType<typeof setTimeout>>;
+  debugLog?: WriteStream | undefined;
   transcriptLog?: WriteStream | undefined;
   transcriptEventCount?: number;
   pendingInput?: string;
@@ -73,6 +80,7 @@ export type TerminalSession = {
   initialInputDraft?: string;
   isInitialInputDraftSent?: boolean;
   keepAliveWithoutClients?: boolean;
+  isClosed?: boolean;
   hasSeenProcessing?: boolean;
   lastToolName?: string | undefined;
 };
@@ -86,8 +94,27 @@ export {
   type TentaclePullRequestSnapshot,
   type TentacleWorkspaceMode,
   type TerminalAgentProvider,
+  type TerminalLifecycleState,
   isTerminalAgentProvider,
   isTerminalCompletionSoundId,
+};
+
+export type TerminalSessionStartDetails = {
+  startedAt: string;
+  processId?: number;
+};
+
+export type TerminalSessionEndReason =
+  | "session_close"
+  | "operator_stop"
+  | "operator_kill"
+  | "pty_exit";
+
+export type TerminalSessionEndDetails = {
+  reason: TerminalSessionEndReason;
+  endedAt: string;
+  exitCode?: number;
+  signal?: number | string;
 };
 
 export type PersistedTerminal = {
@@ -104,6 +131,14 @@ export type PersistedTerminal = {
   initialInputDraft?: string;
   lastActiveAt?: string;
   parentTerminalId?: string;
+  lifecycleState?: TerminalLifecycleState | undefined;
+  lifecycleReason?: string | undefined;
+  lifecycleUpdatedAt?: string | undefined;
+  processId?: number | undefined;
+  startedAt?: string | undefined;
+  endedAt?: string | undefined;
+  exitCode?: number | undefined;
+  exitSignal?: number | string | undefined;
 };
 
 export type GitClientPullRequestSnapshot = Omit<
@@ -154,4 +189,5 @@ export type CreateTerminalRuntimeOptions = {
   projectStateDir?: string | undefined;
   gitClient?: GitClient;
   getApiBaseUrl?: () => string;
+  maxConcurrentSessions?: number | undefined;
 };

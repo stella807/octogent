@@ -7,7 +7,7 @@ export type PendingDeleteTerminal = {
   terminalId: string;
   tentacleName: string;
   workspaceMode: TerminalWorkspaceMode;
-  intent: "delete-terminal" | "cleanup-worktree";
+  intent: "close-terminal" | "delete-terminal" | "cleanup-worktree";
 };
 
 type UseTerminalMutationsOptions = {
@@ -37,7 +37,7 @@ type UseTerminalMutationsResult = {
     terminalName: string,
     options?: {
       workspaceMode?: TerminalWorkspaceMode;
-      intent?: "delete-terminal" | "cleanup-worktree";
+      intent?: "close-terminal" | "delete-terminal" | "cleanup-worktree";
     },
   ) => void;
   confirmDeleteTerminal: () => Promise<void>;
@@ -177,7 +177,7 @@ export const useTerminalMutations = ({
       terminalName: string,
       options?: {
         workspaceMode?: TerminalWorkspaceMode;
-        intent?: "delete-terminal" | "cleanup-worktree";
+        intent?: "close-terminal" | "delete-terminal" | "cleanup-worktree";
       },
     ) => {
       setLoadError(null);

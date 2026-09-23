@@ -196,7 +196,7 @@ export const readDeckTentacles = (
     const contextMdPath = join(entryPath, "CONTEXT.md");
     if (!existsSync(contextMdPath)) continue;
 
-    let agentInfo: { displayName: string; description: string };
+    let agentInfo: { displayName: string; description: string; suggestedSkills: string[] };
     try {
       const content = readFileSync(contextMdPath, "utf-8");
       const parsed = parseContextMd(content);

@@ -258,6 +258,7 @@ export const handleTerminalsCollectionRoute: ApiRouteHandler = async (
 };
 
 const TERMINAL_ITEM_PATH_PATTERN = /^\/api\/terminals\/([^/]+)$/;
+const TERMINAL_ACTION_PATH_PATTERN = /^\/api\/terminals\/([^/]+)\/(stop|kill)$/;
 
 export const handleTerminalItemRoute: ApiRouteHandler = async (
   { request, response, requestUrl, corsOrigin },
@@ -311,5 +312,49 @@ export const handleTerminalItemRoute: ApiRouteHandler = async (
   }
 
   writeJson(response, 200, payload, corsOrigin);
+  return true;
+};
+
+export const handleTerminalActionRoute: ApiRouteHandler = async (
+  { request, response, requestUrl, corsOrigin },
+  { runtime },
+) => {
+  const actionMatch = requestUrl.pathname.match(TERMINAL_ACTION_PATH_PATTERN);
+  if (!actionMatch) {
+    return false;
+  }
+
+  if (request.method !== "POST") {
+    writeMethodNotAllowed(response, corsOrigin);
+    return true;
+  }
+
+  const terminalId = decodeURIComponent(actionMatch[1] ?? "");
+  const action = actionMatch[2];
+  const snapshot =
+    action === "kill" ? runtime.killTerminal(terminalId) : runtime.stopTerminal(terminalId);
+  if (!snapshot) {
+    writeJson(response, 404, { error: "Terminal not found." }, corsOrigin);
+    return true;
+  }
+
+  writeJson(response, 200, snapshot, corsOrigin);
+  return true;
+};
+
+export const handleTerminalPruneRoute: ApiRouteHandler = async (
+  { request, response, requestUrl, corsOrigin },
+  { runtime },
+) => {
+  if (requestUrl.pathname !== "/api/terminals/prune") {
+    return false;
+  }
+
+  if (request.method !== "POST") {
+    writeMethodNotAllowed(response, corsOrigin);
+    return true;
+  }
+
+  writeJson(response, 200, { prunedTerminalIds: runtime.pruneTerminals() }, corsOrigin);
   return true;
 };

@@ -27,7 +27,8 @@ export const createHookProcessor = (deps: {
   transcriptDirectoryPath: string;
   getApiBaseUrl: () => string;
   persistRegistry: () => void;
-  deliverChannelMessages: (terminalId: string) => void;
+  deliverChannelMessages: (terminalId: string) => number;
+  releaseSessionKeepAlive: (terminalId: string) => boolean;
   onStateChange?: (
     terminalId: string,
     state: TerminalSession["agentState"],
@@ -41,6 +42,7 @@ export const createHookProcessor = (deps: {
     getApiBaseUrl,
     persistRegistry,
     deliverChannelMessages,
+    releaseSessionKeepAlive,
     onStateChange,
   } = deps;
 
@@ -395,7 +397,10 @@ export const createHookProcessor = (deps: {
 
     // Deliver any queued channel messages now that the agent is idle.
     if (matchedSessionId) {
-      deliverChannelMessages(matchedSessionId);
+      const deliveredMessageCount = deliverChannelMessages(matchedSessionId);
+      if (deliveredMessageCount === 0) {
+        releaseSessionKeepAlive(matchedSessionId);
+      }
     }
 
     return { ok: true };

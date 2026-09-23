@@ -625,6 +625,7 @@
   min-width: 0;
 }
 
+.canvas-terminal-column-minimize,
 .canvas-terminal-column-close {
   background: none;
   border: none;
@@ -637,6 +638,7 @@
   flex: 0 0 auto;
 }
 
+.canvas-terminal-column-minimize:hover,
 .canvas-terminal-column-close:hover {
   color: #000;
 }

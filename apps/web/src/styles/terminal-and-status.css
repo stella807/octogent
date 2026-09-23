@@ -330,6 +330,16 @@
   color: #fff3f3;
 }
 
+.pill.stale,
+.pill.exited,
+.pill.stopped,
+.status-badge.stale,
+.status-badge.exited,
+.status-badge.stopped {
+  background: var(--term-warning);
+  color: #1a1000;
+}
+
 .pill.warning,
 .status-badge.warning {
   background: var(--term-warning);

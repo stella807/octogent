@@ -436,6 +436,93 @@ const terminalCreate = async () => {
   }
 };
 
+const terminalList = async () => {
+  const apiBase = resolveRuntimeApiBase();
+
+  try {
+    const response = await fetch(`${apiBase}/api/terminal-snapshots`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) {
+      console.error("Error: failed to fetch terminals.");
+      process.exit(1);
+    }
+
+    const terminals = (await response.json()) as Array<Record<string, unknown>>;
+    if (terminals.length === 0) {
+      console.log("No terminals found.");
+      return;
+    }
+
+    for (const terminal of terminals) {
+      const terminalId = String(terminal.terminalId ?? "");
+      const name = String(terminal.tentacleName ?? terminal.label ?? terminalId);
+      const lifecycle = String(terminal.lifecycleState ?? terminal.state ?? "unknown");
+      const pid =
+        typeof terminal.processId === "number" && Number.isFinite(terminal.processId)
+          ? ` pid=${terminal.processId}`
+          : "";
+      const reason =
+        typeof terminal.lifecycleReason === "string" ? ` reason=${terminal.lifecycleReason}` : "";
+      console.log(`  ${terminalId}  ${lifecycle}${pid}${reason}  ${name}`);
+    }
+  } catch {
+    apiError();
+  }
+};
+
+const terminalAction = async (action: "stop" | "kill") => {
+  const terminalId = args[2];
+  if (!terminalId || terminalId.startsWith("-")) {
+    console.error("Error: terminalId is required.");
+    process.exit(1);
+  }
+
+  const apiBase = resolveRuntimeApiBase();
+  try {
+    const response = await fetch(
+      `${apiBase}/api/terminals/${encodeURIComponent(terminalId)}/${action}`,
+      {
+        method: "POST",
+        headers: { Accept: "application/json" },
+      },
+    );
+    const data = (await response.json()) as Record<string, unknown>;
+    if (!response.ok) {
+      console.error(`Error: ${data.error ?? "Failed"}`);
+      process.exit(1);
+    }
+    console.log(`${action === "kill" ? "Killed" : "Stopped"} terminal "${data.terminalId}"`);
+  } catch {
+    apiError();
+  }
+};
+
+const terminalPrune = async () => {
+  const apiBase = resolveRuntimeApiBase();
+
+  try {
+    const response = await fetch(`${apiBase}/api/terminals/prune`, {
+      method: "POST",
+      headers: { Accept: "application/json" },
+    });
+    const data = (await response.json()) as { prunedTerminalIds?: string[]; error?: unknown };
+    if (!response.ok) {
+      console.error(`Error: ${data.error ?? "Failed"}`);
+      process.exit(1);
+    }
+
+    const prunedTerminalIds = data.prunedTerminalIds ?? [];
+    if (prunedTerminalIds.length === 0) {
+      console.log("No stale, stopped, or exited terminals to prune.");
+      return;
+    }
+    console.log(`Pruned ${prunedTerminalIds.length} terminal(s): ${prunedTerminalIds.join(", ")}`);
+  } catch {
+    apiError();
+  }
+};
+
 const channelSend = async () => {
   const terminalId = args[2];
   if (!terminalId || terminalId.startsWith("-")) {
@@ -559,6 +646,18 @@ const main = async () => {
     if (args[1] === "create") {
       return terminalCreate();
     }
+    if (args[1] === "list" || args[1] === "ls") {
+      return terminalList();
+    }
+    if (args[1] === "stop") {
+      return terminalAction("stop");
+    }
+    if (args[1] === "kill") {
+      return terminalAction("kill");
+    }
+    if (args[1] === "prune") {
+      return terminalPrune();
+    }
   }
 
   if (command === "channel") {
@@ -587,6 +686,10 @@ const main = async () => {
     --parent-terminal-id               Parent terminal ID for child terminals
     --prompt-template                  Prompt template name
     --prompt-variables                 JSON object of prompt template variables
+  octogent terminal list               List terminal lifecycle state
+  octogent terminal stop <id>          Stop a terminal session
+  octogent terminal kill <id>          Kill a terminal session or recorded process
+  octogent terminal prune              Remove stale, stopped, and exited terminal records
   octogent channel send <id> <msg>     Send a channel message
   octogent channel list <id>           List channel messages`);
   process.exit(1);

@@ -49,9 +49,9 @@ export type StateChangeTranscriptEvent = ConversationTranscriptEventBase & {
 
 export type SessionEndTranscriptEvent = ConversationTranscriptEventBase & {
   type: "session_end";
-  reason: "pty_exit" | "session_close";
+  reason: "pty_exit" | "session_close" | "operator_stop" | "operator_kill";
   exitCode?: number;
-  signal?: number;
+  signal?: number | string;
 };
 
 export type ConversationTranscriptEvent =
@@ -152,12 +152,20 @@ const parseTranscriptEvent = (value: unknown): ConversationTranscriptEvent | nul
 
   if (eventType === "session_end") {
     const reason = value.reason;
-    if (reason !== "pty_exit" && reason !== "session_close") {
+    if (
+      reason !== "pty_exit" &&
+      reason !== "session_close" &&
+      reason !== "operator_stop" &&
+      reason !== "operator_kill"
+    ) {
       return null;
     }
 
     const exitCode = typeof value.exitCode === "number" ? value.exitCode : undefined;
-    const signal = typeof value.signal === "number" ? value.signal : undefined;
+    const signal =
+      typeof value.signal === "number" || typeof value.signal === "string"
+        ? value.signal
+        : undefined;
 
     return {
       type: "session_end",

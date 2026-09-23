@@ -11,6 +11,7 @@ import {
   DEFAULT_AGENT_PROVIDER,
   DEFAULT_TERMINAL_INACTIVITY_THRESHOLD_MS,
   TERMINAL_ID_PREFIX,
+  TERMINAL_MAX_CONCURRENT_SESSIONS,
 } from "./terminalRuntime/constants";
 import {
   conversationExportMarkdown,
@@ -37,8 +38,11 @@ import {
   RuntimeInputError,
   type TentacleWorkspaceMode,
   type TerminalAgentProvider,
+  type TerminalLifecycleState,
   type TerminalNameOrigin,
   type TerminalSession,
+  type TerminalSessionEndDetails,
+  type TerminalSessionStartDetails,
 } from "./terminalRuntime/types";
 import { createWorktreeManager } from "./terminalRuntime/worktreeManager";
 
@@ -59,6 +63,7 @@ export const createTerminalRuntime = ({
   projectStateDir,
   gitClient = createDefaultGitClient(),
   getApiBaseUrl = () => process.env.OCTOGENT_API_ORIGIN ?? "http://127.0.0.1:8787",
+  maxConcurrentSessions,
 }: CreateTerminalRuntimeOptions) => {
   const stateDir = projectStateDir ?? join(workspaceCwd, ".octogent");
   const sessions = new Map<string, TerminalSession>();
@@ -73,12 +78,133 @@ export const createTerminalRuntime = ({
   const isDebugPtyLogsEnabled = process.env.OCTOGENT_DEBUG_PTY_LOGS === "1";
   const ptyLogDir = process.env.OCTOGENT_DEBUG_PTY_LOG_DIR ?? join(stateDir, "logs");
   const transcriptDirectoryPath = join(stateDir, "state", "transcripts");
+  const configuredMaxConcurrentSessions = (() => {
+    if (maxConcurrentSessions !== undefined) {
+      return maxConcurrentSessions;
+    }
+
+    const raw = process.env.OCTOGENT_MAX_TERMINAL_SESSIONS?.trim();
+    if (!raw) {
+      return TERMINAL_MAX_CONCURRENT_SESSIONS;
+    }
+
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 1
+      ? Math.floor(parsed)
+      : TERMINAL_MAX_CONCURRENT_SESSIONS;
+  })();
   const persistRegistry = () => {
     uiState = pruneUiStateTerminalReferences(uiState, terminals);
     registryPersistence.schedulePersist({
       terminals,
       uiState,
     });
+  };
+
+  const isProcessAlive = (pid: number | undefined): boolean => {
+    if (!pid || !Number.isInteger(pid) || pid <= 0) {
+      return false;
+    }
+
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const lifecycleStateToAgentState = (
+    lifecycleState: TerminalLifecycleState,
+  ): TerminalSnapshot["state"] => {
+    switch (lifecycleState) {
+      case "stale":
+        return "stale";
+      case "exited":
+        return "exited";
+      case "stopped":
+        return "stopped";
+      default:
+        return "live";
+    }
+  };
+
+  const markTerminalRunning = (
+    terminalId: string,
+    { processId, startedAt }: TerminalSessionStartDetails,
+  ) => {
+    const terminal = terminals.get(terminalId);
+    if (!terminal) {
+      return;
+    }
+
+    terminal.lifecycleState = "running";
+    terminal.lifecycleReason = undefined;
+    terminal.lifecycleUpdatedAt = startedAt;
+    terminal.startedAt = startedAt;
+    terminal.endedAt = undefined;
+    terminal.exitCode = undefined;
+    terminal.exitSignal = undefined;
+    if (processId !== undefined) {
+      terminal.processId = processId;
+    } else {
+      terminal.processId = undefined;
+    }
+    persistRegistry();
+    broadcastTerminalEvent({
+      type: "terminal-updated",
+      snapshot: toTerminalSnapshot(terminal),
+    });
+  };
+
+  const markTerminalEnded = (terminalId: string, details: TerminalSessionEndDetails) => {
+    const terminal = terminals.get(terminalId);
+    if (!terminal) {
+      return;
+    }
+
+    terminal.lifecycleState = details.reason === "pty_exit" ? "exited" : "stopped";
+    terminal.lifecycleReason = details.reason;
+    terminal.lifecycleUpdatedAt = details.endedAt;
+    terminal.endedAt = details.endedAt;
+    terminal.processId = undefined;
+    if (details.exitCode !== undefined) {
+      terminal.exitCode = details.exitCode;
+    } else {
+      terminal.exitCode = undefined;
+    }
+    if (details.signal !== undefined) {
+      terminal.exitSignal = details.signal;
+    } else {
+      terminal.exitSignal = undefined;
+    }
+    persistRegistry();
+    broadcastTerminalEvent({
+      type: "terminal-updated",
+      snapshot: toTerminalSnapshot(terminal),
+    });
+  };
+
+  const reconcilePersistedLifecycle = () => {
+    let didChange = false;
+    const now = new Date().toISOString();
+
+    for (const terminal of terminals.values()) {
+      if (terminal.lifecycleState !== "running") {
+        continue;
+      }
+
+      terminal.lifecycleState = "stale";
+      terminal.lifecycleReason = isProcessAlive(terminal.processId)
+        ? "orphaned_process"
+        : "missing_process";
+      terminal.lifecycleUpdatedAt = now;
+      didChange = true;
+    }
+
+    if (didChange) {
+      persistRegistry();
+    }
   };
 
   const worktreeManager = createWorktreeManager({
@@ -123,7 +249,10 @@ export const createTerminalRuntime = ({
     isDebugPtyLogsEnabled,
     ptyLogDir,
     transcriptDirectoryPath,
+    maxConcurrentSessions: configuredMaxConcurrentSessions,
     onStateChange: broadcastTerminalStateChanged,
+    onSessionStart: markTerminalRunning,
+    onSessionEnd: markTerminalEnded,
   });
 
   const gitOps = createGitOperations({
@@ -145,8 +274,11 @@ export const createTerminalRuntime = ({
     getApiBaseUrl,
     persistRegistry,
     deliverChannelMessages: channelMessaging.deliverChannelMessages,
+    releaseSessionKeepAlive: sessionRuntime.releaseSessionKeepAlive,
     onStateChange: broadcastTerminalStateChanged,
   });
+
+  reconcilePersistedLifecycle();
 
   const allocateTerminalId = () => {
     let candidateNumber = 1;
@@ -194,10 +326,13 @@ export const createTerminalRuntime = ({
 
   const toTerminalSnapshot = (terminal: PersistedTerminal): TerminalSnapshot => {
     const session = sessions.get(terminal.terminalId);
+    const lifecycleState: TerminalLifecycleState = session
+      ? "running"
+      : (terminal.lifecycleState ?? "registered");
     return {
       terminalId: terminal.terminalId,
       label: terminal.terminalId,
-      state: "live",
+      state: lifecycleStateToAgentState(lifecycleState),
       tentacleId: terminal.tentacleId,
       tentacleName: terminal.tentacleName,
       workspaceMode: terminal.workspaceMode,
@@ -205,6 +340,14 @@ export const createTerminalRuntime = ({
       hasUserPrompt: isTerminalRecentlyActive(terminal),
       ...(terminal.parentTerminalId ? { parentTerminalId: terminal.parentTerminalId } : {}),
       ...(session ? { agentRuntimeState: session.agentState } : {}),
+      lifecycleState,
+      ...(terminal.lifecycleReason ? { lifecycleReason: terminal.lifecycleReason } : {}),
+      ...(terminal.lifecycleUpdatedAt ? { lifecycleUpdatedAt: terminal.lifecycleUpdatedAt } : {}),
+      ...(terminal.processId ? { processId: terminal.processId } : {}),
+      ...(terminal.startedAt ? { startedAt: terminal.startedAt } : {}),
+      ...(terminal.endedAt ? { endedAt: terminal.endedAt } : {}),
+      ...(terminal.exitCode !== undefined ? { exitCode: terminal.exitCode } : {}),
+      ...(terminal.exitSignal !== undefined ? { exitSignal: terminal.exitSignal } : {}),
     };
   };
 
@@ -287,6 +430,15 @@ export const createTerminalRuntime = ({
         ? requestedTerminalId
         : allocateTerminalId();
 
+    if (initialPrompt) {
+      const capacity = sessionRuntime.getSessionCapacity();
+      if (capacity.active >= capacity.max) {
+        throw new RuntimeInputError(
+          `Terminal session limit reached (${capacity.max}). Close an existing terminal session or increase OCTOGENT_MAX_TERMINAL_SESSIONS.`,
+        );
+      }
+    }
+
     // Allow explicit tentacleId so multiple terminals can share a tentacle context (e.g. swarm workers).
     const tentacleId = requestedTentacleId ?? terminalId;
     const effectiveName = tentacleName ?? allocateDefaultTerminalName();
@@ -306,6 +458,8 @@ export const createTerminalRuntime = ({
       createdAt: new Date().toISOString(),
       workspaceMode,
       agentProvider: agentProvider ?? DEFAULT_AGENT_PROVIDER,
+      lifecycleState: "registered",
+      lifecycleUpdatedAt: new Date().toISOString(),
       ...(initialPrompt ? { initialPrompt } : {}),
       ...(initialInputDraft ? { initialInputDraft } : {}),
       ...(initialPrompt ? { lastActiveAt: new Date().toISOString() } : {}),
@@ -484,6 +638,89 @@ export const createTerminalRuntime = ({
       return toTerminalSnapshot(terminal);
     },
 
+    stopTerminal(terminalId: string): TerminalSnapshot | null {
+      const terminal = terminals.get(terminalId);
+      if (!terminal) {
+        return null;
+      }
+
+      const stoppedActiveSession = sessionRuntime.stopSession(terminalId);
+      if (!stoppedActiveSession && isProcessAlive(terminal.processId)) {
+        try {
+          process.kill(terminal.processId as number, "SIGTERM");
+        } catch {
+          // The lifecycle marker below still removes this terminal from the active set.
+        }
+      }
+
+      if (!stoppedActiveSession) {
+        markTerminalEnded(terminalId, {
+          reason: "operator_stop",
+          endedAt: new Date().toISOString(),
+        });
+      }
+
+      return toTerminalSnapshot(terminal);
+    },
+
+    killTerminal(terminalId: string): TerminalSnapshot | null {
+      const terminal = terminals.get(terminalId);
+      if (!terminal) {
+        return null;
+      }
+
+      const signal = "SIGKILL";
+      const killedActiveSession = sessionRuntime.killSession(terminalId, signal);
+      if (!killedActiveSession && isProcessAlive(terminal.processId)) {
+        try {
+          process.kill(terminal.processId as number, signal);
+        } catch {
+          // The lifecycle marker below still removes this terminal from the active set.
+        }
+      }
+
+      if (!killedActiveSession) {
+        markTerminalEnded(terminalId, {
+          reason: "operator_kill",
+          signal,
+          endedAt: new Date().toISOString(),
+        });
+      }
+
+      return toTerminalSnapshot(terminal);
+    },
+
+    pruneTerminals(): string[] {
+      const prunableStates = new Set<TerminalLifecycleState>(["stale", "exited", "stopped"]);
+      const prunedTerminalIds: string[] = [];
+
+      for (const terminal of terminals.values()) {
+        const lifecycleState = terminal.lifecycleState ?? "registered";
+        if (!prunableStates.has(lifecycleState) || sessions.has(terminal.terminalId)) {
+          continue;
+        }
+
+        prunedTerminalIds.push(terminal.terminalId);
+      }
+
+      if (prunedTerminalIds.length === 0) {
+        return [];
+      }
+
+      for (const terminalId of prunedTerminalIds) {
+        terminals.delete(terminalId);
+      }
+
+      persistRegistry();
+      for (const terminalId of prunedTerminalIds) {
+        broadcastTerminalEvent({
+          type: "terminal-deleted",
+          terminalId,
+        });
+      }
+      return prunedTerminalIds;
+    },
+
     deleteTerminal(terminalId: string): boolean {
       const terminal = terminals.get(terminalId);
       if (!terminal) {
@@ -554,8 +791,8 @@ export const createTerminalRuntime = ({
     },
 
     async close() {
-      await registryPersistence.close();
       sessionRuntime.close();
+      await registryPersistence.close();
       for (const client of terminalEventClients) {
         client.close();
       }
