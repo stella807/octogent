@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { analyze, formatAnalysis } from "./analyze.ts";
 import { fetchContests, formatContests } from "./cantina.ts";
 import { HttpBoardClient } from "./client.ts";
 import { HttpIssueStateClient } from "./liveness.ts";
@@ -15,6 +16,7 @@ Usage:
   bounty-watch once   [options]   Poll every board once and print what is new
   bounty-watch watch  [options]   Poll on an interval until interrupted
   bounty-watch contests           List live or upcoming Cantina audit contests
+  bounty-watch analyze <url>      Show eligibility and the required submission checklist for a program
 
 Options:
   --watchlist <path>   Watchlist JSON (default: ./watchlist.json)
@@ -95,6 +97,16 @@ async function main(argv: readonly string[]): Promise<number> {
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     return 2;
+  }
+
+  if (argv[0] === "analyze") {
+    const url = argv[1];
+    if (!url) {
+      console.error("usage: bounty-watch analyze <program-url>");
+      return 2;
+    }
+    console.log(formatAnalysis(analyze(url)));
+    return 0;
   }
 
   if (args.command === "contests") {
