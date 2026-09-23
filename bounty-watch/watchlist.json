@@ -1,0 +1,14 @@
+{
+  "minAmountUsd": 50,
+  "entries": [
+    { "slug": "coollabsio" },
+    { "slug": "cal" },
+    { "slug": "ZIO" },
+    { "slug": "tursodatabase" },
+    { "slug": "golemcloud" },
+    { "slug": "twentyhq" },
+    { "slug": "documenso" },
+    { "slug": "highlight" },
+    { "slug": "algora" }
+  ]
+}
