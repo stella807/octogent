@@ -9,6 +9,7 @@ import { bollingerReversion } from './bollinger-reversion.ts';
 import { donchianSentiment } from './donchian-sentiment.ts';
 import { bxtrenderAdx } from './bxtrender-adx.ts';
 import { masterConsensus } from './master-consensus.ts';
+import { emaZoneReversal } from './ema-zone-reversal.ts';
 import type { StrategyFactory } from './types.ts';
 
 export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
@@ -23,6 +24,7 @@ export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
   [donchianSentiment.name]: donchianSentiment,
   [bxtrenderAdx.name]: bxtrenderAdx,
   [masterConsensus.name]: masterConsensus,
+  [emaZoneReversal.name]: emaZoneReversal,
 };
 
 export function getStrategy(name: string): StrategyFactory {
@@ -47,5 +49,6 @@ export {
   donchianSentiment,
   bxtrenderAdx,
   masterConsensus,
+  emaZoneReversal,
 };
 export * from './types.ts';

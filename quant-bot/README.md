@@ -174,7 +174,7 @@ discovering it live.
 
 ```bash
 pnpm install
-pnpm test                 # 307 tests, no network needed
+pnpm test                 # 317 tests, no network needed
 pnpm build
 
 # Runs offline against seeded synthetic data
@@ -594,6 +594,38 @@ Neither finding says "more strategies tested equals more edge." Both say
 something more useful: whether search is worth doing at all depends on the
 strategy family, and now there's a number that says which.
 
+## A third survivor: ema-zone-reversal, from a refreshingly honest indicator
+
+Not every screenshot tonight was hype. "PlayBit EMA" described itself
+plainly: two EMAs plotted as a shaded zone, used to read support/resistance
+and reversal points -- no vague "micro-cycle evaluation" language, just a
+description specific enough to build and test. `ema-zone-reversal` treats
+the zone between a fast and slow EMA as dynamic support in an established
+uptrend, and buys the bounce off it rather than the touch itself (buying the
+exact low of a pullback with no confirmation is how support becomes a
+falling knife).
+
+It is now the best-surviving strategy in this repo:
+
+| | full-sample Calmar | walk-forward OOS | walk-forward efficiency | P(ending below start) |
+|---|---|---|---|---|
+| donchian-breakout | 0.72 | +2.20% | 0.65 | 1.40% |
+| vol-target | 0.85 | +3.86% | 0.67 | -- |
+| **ema-zone-reversal** | **0.74** | **+7.85%** | **1.02** (best of any strategy tested) | **0.78%** (best of any strategy tested) |
+
+Efficiency above 1.0 means the out-of-sample folds did BETTER, on average,
+than the in-sample fit that chose their parameters -- the opposite of
+curve-fitting, and the opposite of what `master-consensus` (the actual
+"master strategy," efficiency 0.04) showed two sections up. Same night, same
+rigor, two checklist-sourced strategies landing at opposite ends of the same
+scale: one the best result of the session, one the worst. That range is the
+whole argument for testing every idea the same way rather than judging by
+which screenshot looked more impressive.
+
+It sat out the 2021-2022 bear market entirely (0 trades) rather than losing
+money trying to apply an uptrend-pullback premise to a market with no
+uptrend -- correct, conservative behaviour, not a gap in the strategy.
+
 ## Strategies
 
 | strategy | shape | why it is here |
@@ -610,6 +642,7 @@ strategy family, and now there's a number that says which.
 | `master-consensus` | TSI + TDFI + McGinley Dynamic, all must agree | Best full-sample Calmar of any strategy here (1.20); worst walk-forward efficiency (0.04). |
 
 `search` is a command, not a strategy -- see above for what it tests.
+| `ema-zone-reversal` | buys the bounce off an EMA support/resistance zone | Best walk-forward efficiency (1.02) and lowest ruin probability (0.78%) of any strategy here. |
 | `take-profit-scalp` | tiny target, distant or absent stop | **Not for trading.** The 99%-win-rate demo above. |
 
 Multi-asset strategies, for the `portfolio` command:
@@ -640,7 +673,7 @@ src/
   live/        Broker interface, paper broker, gated exchange broker, runner
   report.ts    Text reports, including the automatic reality checks
 docs/architecture.md   Diagrams of the pipeline, fill timing and kill switch
-test/          307 tests
+test/          317 tests
 ```
 
 ## What this is not
