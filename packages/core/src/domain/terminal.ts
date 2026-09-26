@@ -14,6 +14,7 @@ export type TerminalSnapshot = {
   createdAt: string;
   hasUserPrompt?: boolean;
   parentTerminalId?: string;
+  model?: string;
   agentRuntimeState?: AgentRuntimeState;
   lifecycleState?: TerminalLifecycleState;
   lifecycleReason?: string;

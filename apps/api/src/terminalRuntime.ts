@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Duplex } from "node:stream";
 
 import type { TerminalSnapshot } from "@octogent/core";
+import { isTerminalAgentModel } from "@octogent/core";
 import type { WebSocket } from "ws";
 import { WebSocketServer } from "ws";
 
@@ -339,6 +340,7 @@ export const createTerminalRuntime = ({
       createdAt: terminal.createdAt,
       hasUserPrompt: isTerminalRecentlyActive(terminal),
       ...(terminal.parentTerminalId ? { parentTerminalId: terminal.parentTerminalId } : {}),
+      ...(terminal.model ? { model: terminal.model } : {}),
       ...(session ? { agentRuntimeState: session.agentState } : {}),
       lifecycleState,
       ...(terminal.lifecycleReason ? { lifecycleReason: terminal.lifecycleReason } : {}),
@@ -393,6 +395,7 @@ export const createTerminalRuntime = ({
     tentacleName,
     workspaceMode = "shared",
     agentProvider,
+    model,
     initialPrompt,
     initialInputDraft,
     baseRef,
@@ -406,6 +409,7 @@ export const createTerminalRuntime = ({
     tentacleName?: string;
     workspaceMode?: TentacleWorkspaceMode;
     agentProvider?: TerminalAgentProvider;
+    model?: string;
     initialPrompt?: string;
     initialInputDraft?: string;
     baseRef?: string;
@@ -413,6 +417,10 @@ export const createTerminalRuntime = ({
     nameOrigin?: TerminalNameOrigin;
     autoRenamePromptContext?: string;
   }): TerminalSnapshot => {
+    if (model !== undefined && !isTerminalAgentModel(model)) {
+      throw new RuntimeInputError(`Invalid agent model "${model}".`);
+    }
+
     // Enforce max children per parent.
     if (parentTerminalId) {
       const childCount = [...terminals.values()].filter(
@@ -458,6 +466,7 @@ export const createTerminalRuntime = ({
       createdAt: new Date().toISOString(),
       workspaceMode,
       agentProvider: agentProvider ?? DEFAULT_AGENT_PROVIDER,
+      ...(model ? { model } : {}),
       lifecycleState: "registered",
       lifecycleUpdatedAt: new Date().toISOString(),
       ...(initialPrompt ? { initialPrompt } : {}),

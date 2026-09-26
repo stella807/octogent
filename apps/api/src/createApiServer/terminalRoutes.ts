@@ -15,6 +15,7 @@ import {
   writeNoContent,
 } from "./routeHelpers";
 import {
+  parseTerminalAgentModel,
   parseTerminalAgentProvider,
   parseTerminalName,
   parseTerminalNameOrigin,
@@ -96,6 +97,12 @@ export const handleTerminalsCollectionRoute: ApiRouteHandler = async (
     return true;
   }
 
+  const modelResult = parseTerminalAgentModel(bodyReadResult.payload);
+  if (modelResult.error) {
+    writeJson(response, 400, { error: modelResult.error }, corsOrigin);
+    return true;
+  }
+
   const nameOriginResult = parseTerminalNameOrigin(bodyReadResult.payload);
   if (nameOriginResult.error) {
     writeJson(response, 400, { error: nameOriginResult.error }, corsOrigin);
@@ -110,6 +117,7 @@ export const handleTerminalsCollectionRoute: ApiRouteHandler = async (
       tentacleName?: string;
       workspaceMode: TentacleWorkspaceMode;
       agentProvider?: TerminalAgentProvider;
+      model?: string;
       nameOrigin?: TerminalNameOrigin;
       initialPrompt?: string;
       initialInputDraft?: string;
@@ -123,6 +131,9 @@ export const handleTerminalsCollectionRoute: ApiRouteHandler = async (
     }
     if (agentProviderResult.agentProvider !== undefined) {
       createTerminalInput.agentProvider = agentProviderResult.agentProvider;
+    }
+    if (modelResult.model !== undefined) {
+      createTerminalInput.model = modelResult.model;
     }
     if (nameOriginResult.nameOrigin !== undefined) {
       createTerminalInput.nameOrigin = nameOriginResult.nameOrigin;

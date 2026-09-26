@@ -283,6 +283,43 @@ describe("createSessionRuntime", () => {
     runtime.close();
   });
 
+  it("launches the agent CLI with the terminal's model so cheap worker castes stay cheap", () => {
+    const tentacleId = "tentacle-1";
+    const terminals = new Map<string, PersistedTerminal>([
+      [
+        tentacleId,
+        {
+          terminalId: tentacleId,
+          tentacleId,
+          tentacleName: tentacleId,
+          createdAt: new Date().toISOString(),
+          workspaceMode: "shared",
+          model: "haiku",
+        },
+      ],
+    ]);
+    const sessions = new Map<string, TerminalSession>();
+    const pty = new FakePty();
+    spawnMock.mockReturnValue(pty);
+
+    const runtime = createSessionRuntime({
+      websocketServer: new FakeWebSocketServer() as unknown as import("ws").WebSocketServer,
+      terminals,
+      sessions,
+      getTentacleWorkspaceCwd: () => process.cwd(),
+      isDebugPtyLogsEnabled: false,
+      ptyLogDir: process.cwd(),
+      transcriptDirectoryPath: createTemporaryDirectory(),
+      sessionIdleGraceMs: 60_000,
+      scrollbackMaxBytes: 1024,
+    });
+
+    expect(runtime.startSession(tentacleId)).toBe(true);
+    expect(pty.write).toHaveBeenNthCalledWith(1, "claude --model haiku\r");
+
+    runtime.close();
+  });
+
   it("clears delayed prompt timers when a prompted session is closed", () => {
     vi.useFakeTimers();
 

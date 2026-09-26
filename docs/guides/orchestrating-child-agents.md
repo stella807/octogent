@@ -61,7 +61,13 @@ The parent is intentionally not a magic scheduler. It is an agent session with e
 
 ## Worker limits and identity
 
-Each parent can have up to 9 child terminals. If a swarm has more incomplete todo items than that, Octogent uses todo order as priority order and defers the overflow.
+Each parent can have up to 9 child terminals. If a swarm has more incomplete todo items than that, the first 9 in todo order each get a worker and the rest go into the swarm queue. After a worker reports DONE, it runs `octogent swarm claim` and takes the next queued item in its same session (and, in worktree mode, on its same branch). When the queue is empty it reports FINISHED, and the coordinator merges once every worker has.
+
+The pool is fixed on purpose. Spawning a fresh agent per item pays a cold start each time, with the new session re-reading the tentacle context and codebase. A warm worker already has that context, so a long backlog costs fewer tokens run through 9 workers than through one new worker per item.
+
+## Worker models
+
+A swarm request can set `coordinatorModel` and `workerModel`, for example `opus` for the coordinator that plans and reviews merges, and `haiku` or `sonnet` for workers doing narrow, well-scoped items. Both are optional; unset means the agent CLI's default model. This is where swarms save the most credits, because workers produce most of the tokens. Use a cheaper worker model only when todo items are small and clearly specified, since a weaker worker on a vague item costs more in coordinator review and rework than it saves.
 
 Worker terminal IDs are derived from the tentacle ID and todo index. That makes duplicate detection simple: Octogent refuses to start a second active solve or swarm for the same item pattern.
 

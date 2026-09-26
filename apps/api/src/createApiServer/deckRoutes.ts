@@ -23,7 +23,11 @@ import {
   writeNoContent,
   writeText,
 } from "./routeHelpers";
-import { parseTerminalAgentProvider, parseTerminalWorkspaceMode } from "./terminalParsers";
+import {
+  parseTerminalAgentModel,
+  parseTerminalAgentProvider,
+  parseTerminalWorkspaceMode,
+} from "./terminalParsers";
 
 const shellSingleQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
 
@@ -514,7 +518,7 @@ const DECK_TENTACLE_SWARM_PATTERN = /^\/api\/deck\/tentacles\/([^/]+)\/swarm$/;
 
 export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
   { request, response, requestUrl, corsOrigin },
-  { runtime, workspaceCwd, projectStateDir, promptsDir, getApiPort },
+  { runtime, workspaceCwd, projectStateDir, promptsDir, getApiPort, swarmQueues },
 ) => {
   const match = requestUrl.pathname.match(DECK_TENTACLE_SWARM_PATTERN);
   if (!match) return false;
@@ -562,6 +566,18 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
   const workerWorkspaceMode =
     body.workspaceMode === undefined ? "worktree" : workspaceModeResult.workspaceMode;
 
+  // Castes: a coordinator that plans and reviews can run on a stronger model
+  // than the workers doing narrow, well-scoped items.
+  const workerModelResult = parseTerminalAgentModel(body, "workerModel");
+  const coordinatorModelResult = parseTerminalAgentModel(body, "coordinatorModel");
+  const modelError = workerModelResult.error ?? coordinatorModelResult.error;
+  if (modelError) {
+    writeJson(response, 400, { error: modelError }, corsOrigin);
+    return true;
+  }
+  const workerModel = workerModelResult.model;
+  const coordinatorModel = coordinatorModelResult.model;
+
   // Filter to specific item indices if requested.
   let targetItems = incompleteItems;
   if (Array.isArray(body.todoItemIndices)) {
@@ -580,10 +596,12 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
     }
   }
 
-  if (targetItems.length > MAX_CHILDREN_PER_PARENT) {
-    // Todo order is priority order, so overflow items are deferred automatically.
-    targetItems = targetItems.slice(0, MAX_CHILDREN_PER_PARENT);
-  }
+  // Todo order is priority order: the first items get a worker each, and the
+  // overflow waits in the swarm queue for whichever worker finishes first.
+  const queuedItems = targetItems
+    .slice(MAX_CHILDREN_PER_PARENT)
+    .map((item) => ({ todoIndex: item.index, todoText: item.text }));
+  targetItems = targetItems.slice(0, MAX_CHILDREN_PER_PARENT);
 
   // Check for existing swarm terminals to prevent duplicates.
   const existingTerminals = runtime.listTerminalSnapshots();
@@ -666,7 +684,7 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
   const buildCompletionStrategySection = (baseBranch: string): string =>
     workerWorkspaceMode === "worktree"
       ? [
-          `Only begin merging after ALL ${workers.length} workers have reported DONE.`,
+          `Only begin merging after ALL ${workers.length} workers have reported FINISHED (every item done and the swarm queue drained).`,
           "",
           "### Step-by-step merge process",
           "",
@@ -705,7 +723,7 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
           "If a worker's branch has conflicts that are too complex to resolve, send a message to that worker asking them to rebase their work. Merge the other workers' branches first.",
         ].join("\n")
       : [
-          `Only begin final verification after ALL ${workers.length} workers have reported DONE.`,
+          `Only begin final verification after ALL ${workers.length} workers have reported FINISHED (every item done and the swarm queue drained).`,
           "",
           "Workers are sharing the main workspace, so there are no per-worker branches to merge.",
           "",
@@ -730,6 +748,20 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
           "### Shared-workspace failure recovery",
           "",
           "If two workers collide in the same files, stop them from making broad new edits, inspect the current diff, and coordinate targeted follow-up changes instead of pretending there is a clean merge boundary.",
+        ].join("\n");
+
+  const buildQueueSection = (): string =>
+    queuedItems.length === 0
+      ? "Every in-scope item has its own worker, so the swarm queue is empty. Workers will still run `swarm claim`, get `QUEUE EMPTY`, and report FINISHED."
+      : [
+          `${queuedItems.length} more item(s) did not get their own worker. They wait in the swarm queue, and each worker claims the next one itself after reporting DONE, reusing its warm session instead of a new one:`,
+          "",
+          ...queuedItems.map((item) => `- item #${item.todoIndex}: ${item.todoText}`),
+          "",
+          "Do not spawn extra workers for these and do not assign them by message. Check who holds what with:",
+          "```bash",
+          `node bin/octogent swarm queue ${tentacleId}`,
+          "```",
         ].join("\n");
 
   try {
@@ -768,6 +800,7 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
         ...(agentProviderResult.agentProvider
           ? { agentProvider: agentProviderResult.agentProvider }
           : {}),
+        ...(workerModel ? { model: workerModel } : {}),
         ...(workerPrompt ? { initialPrompt: workerPrompt } : {}),
         ...(workerWorkspaceMode === "worktree" ? { baseRef } : {}),
       });
@@ -792,6 +825,18 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
             "If you are blocked, ask for help:",
             "```bash",
             `node bin/octogent channel send ${parentTerminalId} "BLOCKED: <describe what you need>" --from ${workerTerminalId}`,
+            "```",
+            "",
+            "## Next Item From The Swarm Queue",
+            "",
+            "This swarm has a shared queue of todo items that did not get their own worker. After reporting DONE, claim the next one instead of stopping:",
+            "```bash",
+            `node bin/octogent swarm claim ${tentacleId} --from ${workerTerminalId}`,
+            "```",
+            "- If it prints `CLAIMED #<index>: <text>`, that item is now yours alone. Treat it exactly like your first assignment (same scope rules, tests, and workspace rules; in worktree mode keep committing on your same branch), report DONE for it, then claim again.",
+            "- If it prints `QUEUE EMPTY`, you are finished. Send one final message and stop:",
+            "```bash",
+            `node bin/octogent channel send ${parentTerminalId} "FINISHED" --from ${workerTerminalId}`,
             "```",
           ].join("\n");
 
@@ -822,6 +867,7 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
             `--auto-rename-prompt-context ${shellSingleQuote(item.text)}`,
             "--prompt-template swarm-worker",
             `--prompt-variables ${shellSingleQuote(promptVariables)}`,
+            ...(workerModel ? [`--model ${shellSingleQuote(workerModel)}`] : []),
           ];
           if (workerWorkspaceMode === "worktree") {
             commandParts.splice(3, 0, `--worktree-id ${shellSingleQuote(workerTerminalId)}`);
@@ -843,6 +889,7 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
         workerListing,
         workerWorkspaceSection: buildWorkerWorkspaceSection(),
         workerSpawnCommands,
+        queueSection: buildQueueSection(),
         completionStrategySection: buildCompletionStrategySection(parentBaseBranch),
         baseBranch: parentBaseBranch,
         terminalId: parentTerminalId,
@@ -857,8 +904,15 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
         ...(agentProviderResult.agentProvider
           ? { agentProvider: agentProviderResult.agentProvider }
           : {}),
+        ...(coordinatorModel ? { model: coordinatorModel } : {}),
         ...(parentPrompt ? { initialPrompt: parentPrompt } : {}),
       });
+
+      swarmQueues.open(
+        tentacleId,
+        workers.map((w) => w.terminalId),
+        queuedItems,
+      );
     }
   } catch (error) {
     if (error instanceof RuntimeInputError) {
@@ -868,6 +922,65 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
     throw error;
   }
 
-  writeJson(response, 201, { tentacleId, parentTerminalId, workers }, corsOrigin);
+  writeJson(response, 201, { tentacleId, parentTerminalId, workers, queuedItems }, corsOrigin);
+  return true;
+};
+
+const DECK_TENTACLE_SWARM_QUEUE_PATTERN = /^\/api\/deck\/tentacles\/([^/]+)\/swarm\/(claim|queue)$/;
+
+export const handleDeckTentacleSwarmQueueRoute: ApiRouteHandler = async (
+  { request, response, requestUrl, corsOrigin },
+  { swarmQueues },
+) => {
+  const match = requestUrl.pathname.match(DECK_TENTACLE_SWARM_QUEUE_PATTERN);
+  if (!match) return false;
+
+  const tentacleId = decodeURIComponent(match[1] as string);
+  const action = match[2] as "claim" | "queue";
+
+  if (action === "queue") {
+    if (request.method !== "GET") {
+      writeMethodNotAllowed(response, corsOrigin);
+      return true;
+    }
+    const snapshot = swarmQueues.snapshot(tentacleId);
+    if (!snapshot) {
+      writeJson(response, 404, { error: "No swarm queue for this tentacle." }, corsOrigin);
+      return true;
+    }
+    writeJson(response, 200, snapshot, corsOrigin);
+    return true;
+  }
+
+  if (request.method !== "POST") {
+    writeMethodNotAllowed(response, corsOrigin);
+    return true;
+  }
+
+  const bodyReadResult = await readJsonBodyOrWriteError(request, response, corsOrigin);
+  if (!bodyReadResult.ok) return true;
+  const body = (bodyReadResult.payload ?? {}) as Record<string, unknown>;
+  const terminalId = typeof body.terminalId === "string" ? body.terminalId.trim() : "";
+  if (terminalId.length === 0) {
+    writeJson(response, 400, { error: "terminalId is required." }, corsOrigin);
+    return true;
+  }
+
+  const result = swarmQueues.claim(tentacleId, terminalId);
+  if (!result.ok) {
+    if (result.error === "no-swarm") {
+      writeJson(response, 404, { error: "No swarm queue for this tentacle." }, corsOrigin);
+    } else {
+      writeJson(
+        response,
+        403,
+        { error: `Terminal "${terminalId}" is not a worker in this tentacle's swarm.` },
+        corsOrigin,
+      );
+    }
+    return true;
+  }
+
+  writeJson(response, 200, { item: result.item, remaining: result.remaining }, corsOrigin);
   return true;
 };

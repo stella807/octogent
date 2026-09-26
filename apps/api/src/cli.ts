@@ -404,6 +404,7 @@ const terminalCreate = async () => {
   const autoRenamePromptContext = parseFlag("--auto-rename-prompt-context");
   const promptTemplate = parseFlag("--prompt-template");
   const promptVariables = parseJsonFlag("--prompt-variables");
+  const model = parseFlag("--model");
   const apiBase = resolveRuntimeApiBase();
 
   const body: Record<string, unknown> = {};
@@ -418,6 +419,7 @@ const terminalCreate = async () => {
   if (autoRenamePromptContext) body.autoRenamePromptContext = autoRenamePromptContext;
   if (promptTemplate) body.promptTemplate = promptTemplate;
   if (promptVariables) body.promptVariables = promptVariables;
+  if (model) body.model = model;
 
   try {
     const response = await fetch(`${apiBase}/api/terminals`, {
@@ -609,6 +611,83 @@ const channelList = async () => {
   }
 };
 
+const swarmClaim = async () => {
+  const tentacleId = args[2];
+  if (!tentacleId || tentacleId.startsWith("-")) {
+    console.error("Error: tentacleId is required.");
+    process.exit(1);
+  }
+  const terminalId = parseFlag("--from") ?? process.env.OCTOGENT_SESSION_ID ?? "";
+  if (!terminalId) {
+    console.error("Error: --from <workerTerminalId> is required.");
+    process.exit(1);
+  }
+
+  const apiBase = resolveRuntimeApiBase();
+  try {
+    const response = await fetch(
+      `${apiBase}/api/deck/tentacles/${encodeURIComponent(tentacleId)}/swarm/claim`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ terminalId }),
+      },
+    );
+    const data = (await response.json()) as {
+      item?: { todoIndex: number; todoText: string } | null;
+      remaining?: number;
+      error?: unknown;
+    };
+    if (!response.ok) {
+      console.error(`Error: ${data.error ?? "Failed"}`);
+      process.exit(1);
+    }
+    // Workers act on this output, so the two outcomes use fixed prefixes.
+    if (!data.item) {
+      console.log("QUEUE EMPTY");
+      return;
+    }
+    console.log(`CLAIMED #${data.item.todoIndex}: ${data.item.todoText}`);
+    console.log(`(${data.remaining ?? 0} item(s) still queued)`);
+  } catch {
+    apiError();
+  }
+};
+
+const swarmQueue = async () => {
+  const tentacleId = args[2];
+  if (!tentacleId || tentacleId.startsWith("-")) {
+    console.error("Error: tentacleId is required.");
+    process.exit(1);
+  }
+
+  const apiBase = resolveRuntimeApiBase();
+  try {
+    const response = await fetch(
+      `${apiBase}/api/deck/tentacles/${encodeURIComponent(tentacleId)}/swarm/queue`,
+    );
+    const data = (await response.json()) as {
+      pending?: Array<{ todoIndex: number; todoText: string }>;
+      claimed?: Array<{ todoIndex: number; todoText: string; terminalId: string }>;
+      error?: unknown;
+    };
+    if (!response.ok) {
+      console.error(`Error: ${data.error ?? "Failed"}`);
+      process.exit(1);
+    }
+    const pending = data.pending ?? [];
+    const claimed = data.claimed ?? [];
+    console.log(`Queued (${pending.length}):`);
+    for (const item of pending) console.log(`  #${item.todoIndex}: ${item.todoText}`);
+    console.log(`Claimed (${claimed.length}):`);
+    for (const item of claimed) {
+      console.log(`  #${item.todoIndex} -> ${item.terminalId}: ${item.todoText}`);
+    }
+  } catch {
+    apiError();
+  }
+};
+
 const main = async () => {
   if (!command || command === "start") {
     return startServer();
@@ -669,6 +748,15 @@ const main = async () => {
     }
   }
 
+  if (command === "swarm") {
+    if (args[1] === "claim") {
+      return swarmClaim();
+    }
+    if (args[1] === "queue") {
+      return swarmQueue();
+    }
+  }
+
   console.log(`Usage:
   octogent                             Start the dashboard in the current project
   octogent init [project-name]         Initialize the current directory explicitly
@@ -686,12 +774,15 @@ const main = async () => {
     --parent-terminal-id               Parent terminal ID for child terminals
     --prompt-template                  Prompt template name
     --prompt-variables                 JSON object of prompt template variables
+    --model                            Agent model, e.g. haiku | sonnet | opus
   octogent terminal list               List terminal lifecycle state
   octogent terminal stop <id>          Stop a terminal session
   octogent terminal kill <id>          Kill a terminal session or recorded process
   octogent terminal prune              Remove stale, stopped, and exited terminal records
   octogent channel send <id> <msg>     Send a channel message
-  octogent channel list <id>           List channel messages`);
+  octogent channel list <id>           List channel messages
+  octogent swarm claim <tentacleId>    Claim the next queued swarm item (--from <workerId>)
+  octogent swarm queue <tentacleId>    Show queued and claimed swarm items`);
   process.exit(1);
 };
 

@@ -4,6 +4,7 @@ import type { UsageChartResponse } from "../claudeSessionScanner";
 import type { ClaudeUsageSnapshot } from "../claudeUsage";
 import type { CodeIntelStore } from "../codeIntelStore";
 import type { CodexUsageSnapshot } from "../codexUsage";
+import type { SwarmQueueStore } from "../deck/swarmQueue";
 import type { GitHubRepoSummarySnapshot } from "../githubRepoSummary";
 import type { MonitorService } from "../monitor";
 import { RequestBodyTooLargeError, readJsonBody } from "./requestParsers";
@@ -28,6 +29,7 @@ export type RouteHandlerDependencies = {
   monitorService: MonitorService;
   invalidateClaudeUsageCache: () => void;
   codeIntelStore: CodeIntelStore;
+  swarmQueues: SwarmQueueStore;
 };
 
 export type RouteHandlerContext = {

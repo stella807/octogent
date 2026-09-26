@@ -22,6 +22,8 @@ Most HTTP routes either read/write persisted files or create runtime records. We
 
 Terminal snapshots include `lifecycleState` when known. Supported lifecycle states are `registered`, `running`, `stopped`, `exited`, and `stale`. Stale terminals are records that were persisted as running but could not be reattached to a live Octogent PTY session after startup.
 
+`POST /api/terminals` accepts an optional `model` (for example `haiku`, `sonnet`, `opus`, or a full model id). It is passed to the agent CLI as `--model` when the session starts and appears on the snapshot. Only letters, digits, `.`, `_`, `:`, and `-` are accepted, because the value is typed into a shell.
+
 Creating a terminal registers metadata first. A PTY starts immediately only when an initial prompt is provided, a WebSocket attaches, or an internal direct listener starts the session. Worktree terminals also create their worktree before the terminal record is exposed.
 
 ## Git and worktrees
@@ -45,7 +47,9 @@ Creating a terminal registers metadata first. A PTY starts immediately only when
 - `PATCH /api/deck/tentacles/:tentacleId/todo/edit` - edits the text of a todo item
 - `POST /api/deck/tentacles/:tentacleId/todo/delete` - deletes a todo item
 - `GET /api/deck/tentacles/:tentacleId/files/:filename` - reads one markdown file from the tentacle vault
-- `POST /api/deck/tentacles/:tentacleId/swarm` - spawns worker terminals from incomplete todo items
+- `POST /api/deck/tentacles/:tentacleId/swarm` - spawns worker terminals from incomplete todo items; items beyond the child cap are returned as `queuedItems` and wait in the swarm queue. Optional body fields: `workspaceMode`, `agentProvider`, `workerModel`, `coordinatorModel`
+- `POST /api/deck/tentacles/:tentacleId/swarm/claim` - a pool worker (`{ "terminalId": ... }`) claims the next queued item; returns `{ item, remaining }` with `item: null` once the queue is empty, 403 for terminals outside the pool, 404 when the tentacle has no swarm queue
+- `GET /api/deck/tentacles/:tentacleId/swarm/queue` - lists pending and claimed queue items
 
 Deck routes treat `.octogent/tentacles/<tentacle-id>/` as the source of truth for agent-facing context. Todo operations update `todo.md` by parsed item index. Swarm operations derive worker assignments from incomplete parsed todo items.
 

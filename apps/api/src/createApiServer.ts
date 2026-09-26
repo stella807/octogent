@@ -14,6 +14,7 @@ import { readCodexUsageSnapshot as readCodexUsageSnapshotDefault } from "./codex
 import { createApiRequestHandler } from "./createApiServer/requestHandler";
 import type { CreateApiServerOptions } from "./createApiServer/types";
 import { createUpgradeHandler } from "./createApiServer/upgradeHandler";
+import { createSwarmQueueStore } from "./deck/swarmQueue";
 import { readGithubRepoSummary as readGithubRepoSummaryDefault } from "./githubRepoSummary";
 import { createMonitorService } from "./monitor";
 import { createTerminalRuntime } from "./terminalRuntime";
@@ -113,6 +114,7 @@ export const createApiServer = ({
     ((scope: "all" | "project") => scanClaudeUsageChart(scope, resolvedWorkspaceCwd));
 
   const codeIntelStore = createCodeIntelStore(resolvedStateDir);
+  const swarmQueues = createSwarmQueueStore();
 
   const requestHandler = createApiRequestHandler({
     runtime,
@@ -132,6 +134,7 @@ export const createApiServer = ({
     monitorService: monitorServiceWithDefault,
     invalidateClaudeUsageCache,
     codeIntelStore,
+    swarmQueues,
     allowRemoteAccess,
   });
 

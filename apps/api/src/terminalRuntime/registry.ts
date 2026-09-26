@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 
 import { TERMINAL_REGISTRY_VERSION } from "./constants";
 
+import { isTerminalAgentModel } from "@octogent/core";
 import { toErrorMessage } from "./systemClients";
 import type {
   PersistedTerminal,
@@ -267,6 +268,7 @@ const parseV3Terminals = (
     if (typeof entry.parentTerminalId === "string")
       terminal.parentTerminalId = entry.parentTerminalId;
     if (isTerminalAgentProvider(entry.agentProvider)) terminal.agentProvider = entry.agentProvider;
+    if (isTerminalAgentModel(entry.model)) terminal.model = entry.model;
     if (typeof entry.initialPrompt === "string") terminal.initialPrompt = entry.initialPrompt;
     if (typeof entry.initialInputDraft === "string") {
       terminal.initialInputDraft = entry.initialInputDraft;

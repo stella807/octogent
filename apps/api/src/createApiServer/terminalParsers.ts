@@ -1,3 +1,5 @@
+import { isTerminalAgentModel } from "@octogent/core";
+
 import {
   type TentacleWorkspaceMode,
   type TerminalAgentProvider,
@@ -164,4 +166,26 @@ export const parseTerminalNameOrigin = (payload: unknown) => {
     nameOrigin: rawNameOrigin,
     error: null as string | null,
   };
+};
+
+/**
+ * Reads an optional agent model from `payload[key]`. Rejecting rather than
+ * sanitizing: the value ends up in a shell command, and a silently rewritten
+ * model name would run a different model than the caller asked for.
+ */
+export const parseTerminalAgentModel = (payload: unknown, key = "model") => {
+  const raw =
+    payload !== null && typeof payload === "object"
+      ? (payload as Record<string, unknown>)[key]
+      : undefined;
+  if (raw === undefined) {
+    return { model: undefined as string | undefined, error: null as string | null };
+  }
+  if (!isTerminalAgentModel(raw)) {
+    return {
+      model: undefined as string | undefined,
+      error: `${key} must be a model id such as "sonnet" or "claude-haiku-4-5" (letters, digits, ".", "_", ":", "-").`,
+    };
+  }
+  return { model: raw, error: null as string | null };
 };

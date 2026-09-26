@@ -57,6 +57,7 @@ Options:
 - `--parent-terminal-id`: parent terminal ID for child terminals
 - `--prompt-template`: prompt template name
 - `--prompt-variables`: JSON object of prompt template variables
+- `--model`: agent model passed to the CLI as `--model`, e.g. `haiku`, `sonnet`, `opus`
 
 ## List terminals
 
@@ -96,3 +97,13 @@ Use `--from <terminal-id>` when sending on behalf of a worker or parent terminal
 ```bash
 octogent channel list <terminal-id>
 ```
+
+## Work the swarm queue
+
+```bash
+octogent swarm claim <tentacle-id> --from <worker-terminal-id>
+octogent swarm queue <tentacle-id>
+```
+
+`claim` gives the calling pool worker the next queued todo item and prints `CLAIMED #<index>: <text>`, or `QUEUE EMPTY` when nothing is left. Swarm workers run it themselves after each DONE. `queue` shows which items are still waiting and which worker holds each claimed one. Like channels, the queue is in memory and does not survive an API restart.
+

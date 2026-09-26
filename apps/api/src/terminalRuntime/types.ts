@@ -127,6 +127,8 @@ export type PersistedTerminal = {
   createdAt: string;
   workspaceMode: TentacleWorkspaceMode;
   agentProvider?: TerminalAgentProvider;
+  /** Passed to the agent CLI as `--model`; unset means the CLI's own default. */
+  model?: string;
   initialPrompt?: string;
   initialInputDraft?: string;
   lastActiveAt?: string;

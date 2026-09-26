@@ -7,6 +7,7 @@ import type { UsageChartResponse } from "../claudeSessionScanner";
 import type { ClaudeUsageSnapshot } from "../claudeUsage";
 import type { CodeIntelStore } from "../codeIntelStore";
 import type { CodexUsageSnapshot } from "../codexUsage";
+import type { SwarmQueueStore } from "../deck/swarmQueue";
 import type { GitHubRepoSummarySnapshot } from "../githubRepoSummary";
 import { logVerbose } from "../logging";
 import type { MonitorService } from "../monitor";
@@ -21,6 +22,7 @@ import {
   handleDeckSkillsRoute,
   handleDeckTentacleItemRoute,
   handleDeckTentacleSkillsRoute,
+  handleDeckTentacleSwarmQueueRoute,
   handleDeckTentacleSwarmRoute,
   handleDeckTentaclesRoute,
   handleDeckTodoAddRoute,
@@ -103,6 +105,7 @@ type CreateApiRequestHandlerOptions = {
   monitorService: MonitorService;
   invalidateClaudeUsageCache: () => void;
   codeIntelStore: CodeIntelStore;
+  swarmQueues: SwarmQueueStore;
   allowRemoteAccess: boolean;
 };
 
@@ -119,6 +122,7 @@ const API_ROUTE_MAP: ReadonlyMap<string, readonly ApiRouteHandler[]> = new Map([
       handleDeckTentacleSkillsRoute,
       handleDeckTodoSolveRoute,
       handleDeckTentacleSwarmRoute,
+      handleDeckTentacleSwarmQueueRoute,
       handleDeckTodoToggleRoute,
       handleDeckTodoEditRoute,
       handleDeckTodoAddRoute,
@@ -214,6 +218,7 @@ export const createApiRequestHandler = ({
   monitorService,
   invalidateClaudeUsageCache,
   codeIntelStore,
+  swarmQueues,
   allowRemoteAccess,
 }: CreateApiRequestHandlerOptions) => {
   const resolvedWebDistDir = webDistDir && existsSync(webDistDir) ? webDistDir : null;
@@ -235,6 +240,7 @@ export const createApiRequestHandler = ({
     monitorService,
     invalidateClaudeUsageCache,
     codeIntelStore,
+    swarmQueues,
   };
 
   return async (request: IncomingMessage, response: ServerResponse) => {

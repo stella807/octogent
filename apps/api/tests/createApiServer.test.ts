@@ -3001,37 +3001,30 @@ describe("createApiServer", () => {
     ]);
   });
 
-  it("limits swarm prompts to the top-priority items that fit under the child cap", async () => {
+  const repoPromptsDir = join(process.cwd(), "..", "..", "prompts");
+
+  const writeSwarmTentacle = (workspaceCwd: string, itemCount: number) => {
+    const tentacleDir = join(workspaceCwd, ".octogent", "tentacles", "docs-knowledge");
+    mkdirSync(tentacleDir, { recursive: true });
+    writeFileSync(join(tentacleDir, "CONTEXT.md"), "# Docs & Knowledge\n", "utf8");
+    const todoItems = Array.from({ length: itemCount }, (_, index) => `- [ ] item ${index}`);
+    writeFileSync(join(tentacleDir, "todo.md"), `# Todo\n\n${todoItems.join("\n")}\n`, "utf8");
+  };
+
+  const postJson = (url: string, body: unknown) =>
+    fetch(url, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("queues swarm items beyond the child cap instead of dropping them", async () => {
     const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
     temporaryDirectories.push(workspaceCwd);
-    mkdirSync(join(workspaceCwd, ".octogent", "tentacles", "docs-knowledge"), {
-      recursive: true,
-    });
-    writeFileSync(
-      join(workspaceCwd, ".octogent", "tentacles", "docs-knowledge", "CONTEXT.md"),
-      "# Docs & Knowledge\n",
-      "utf8",
-    );
-    const todoItems = Array.from(
-      { length: MAX_CHILDREN_PER_PARENT + 4 },
-      (_, index) => `- [ ] item ${index}`,
-    ).join("\n");
-    writeFileSync(
-      join(workspaceCwd, ".octogent", "tentacles", "docs-knowledge", "todo.md"),
-      `# Todo\n\n${todoItems}\n`,
-      "utf8",
-    );
+    writeSwarmTentacle(workspaceCwd, MAX_CHILDREN_PER_PARENT + 4);
 
-    const baseUrl = await startServer({ workspaceCwd });
-
-    const swarmResponse = await fetch(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({}),
-    });
+    const baseUrl = await startServer({ workspaceCwd, promptsDir: repoPromptsDir });
+    const swarmResponse = await postJson(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`, {});
 
     expect(swarmResponse.status).toBe(201);
     await expect(swarmResponse.json()).resolves.toEqual({
@@ -3042,15 +3035,109 @@ describe("createApiServer", () => {
         todoIndex: index,
         todoText: `item ${index}`,
       })),
+      queuedItems: Array.from({ length: 4 }, (_, offset) => ({
+        todoIndex: MAX_CHILDREN_PER_PARENT + offset,
+        todoText: `item ${MAX_CHILDREN_PER_PARENT + offset}`,
+      })),
     });
 
-    const promptTemplate = readFileSync(
-      join(process.cwd(), "..", "..", "prompts", "swarm-parent.md"),
-      "utf8",
+    const registry = await waitForRegistryDocument<{
+      terminals: Array<{ terminalId: string; initialPrompt?: string }>;
+    }>(workspaceCwd, (document) =>
+      document.terminals.some((t) => t.terminalId === "docs-knowledge-swarm-parent"),
     );
-    expect(promptTemplate).toContain(
-      "Treat the listed workers as the highest-priority items and proceed without asking the user whether to batch, reprioritize, or raise the limit.",
+    const parentPrompt =
+      registry.terminals.find((t) => t.terminalId === "docs-knowledge-swarm-parent")
+        ?.initialPrompt ?? "";
+    expect(parentPrompt).toContain(`item ${MAX_CHILDREN_PER_PARENT + 3}`);
+    expect(parentPrompt).toContain("octogent swarm claim docs-knowledge");
+  });
+
+  it("lets pool workers claim queued items in todo order until the queue is empty", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    writeSwarmTentacle(workspaceCwd, MAX_CHILDREN_PER_PARENT + 2);
+
+    const baseUrl = await startServer({ workspaceCwd });
+    await postJson(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`, {});
+    const claimUrl = `${baseUrl}/api/deck/tentacles/docs-knowledge/swarm/claim`;
+
+    const first = await postJson(claimUrl, { terminalId: "docs-knowledge-swarm-4" });
+    expect(first.status).toBe(200);
+    await expect(first.json()).resolves.toEqual({
+      item: { todoIndex: MAX_CHILDREN_PER_PARENT, todoText: `item ${MAX_CHILDREN_PER_PARENT}` },
+      remaining: 1,
+    });
+
+    await postJson(claimUrl, { terminalId: "docs-knowledge-swarm-0" });
+    const empty = await postJson(claimUrl, { terminalId: "docs-knowledge-swarm-4" });
+    await expect(empty.json()).resolves.toEqual({ item: null, remaining: 0 });
+
+    const queueResponse = await fetch(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm/queue`);
+    expect(queueResponse.status).toBe(200);
+    await expect(queueResponse.json()).resolves.toMatchObject({
+      pending: [],
+      claimed: [
+        { todoIndex: MAX_CHILDREN_PER_PARENT, terminalId: "docs-knowledge-swarm-4" },
+        { todoIndex: MAX_CHILDREN_PER_PARENT + 1, terminalId: "docs-knowledge-swarm-0" },
+      ],
+    });
+  });
+
+  it("rejects queue claims from terminals outside the worker pool", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    writeSwarmTentacle(workspaceCwd, MAX_CHILDREN_PER_PARENT + 1);
+
+    const baseUrl = await startServer({ workspaceCwd });
+    const claimUrl = `${baseUrl}/api/deck/tentacles/docs-knowledge/swarm/claim`;
+
+    const beforeSwarm = await postJson(claimUrl, { terminalId: "docs-knowledge-swarm-0" });
+    expect(beforeSwarm.status).toBe(404);
+
+    await postJson(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`, {});
+    const fromParent = await postJson(claimUrl, { terminalId: "docs-knowledge-swarm-parent" });
+    expect(fromParent.status).toBe(403);
+    const missingId = await postJson(claimUrl, {});
+    expect(missingId.status).toBe(400);
+  });
+
+  it("runs the coordinator and workers on the models requested for each caste", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    writeSwarmTentacle(workspaceCwd, 3);
+
+    const baseUrl = await startServer({ workspaceCwd, promptsDir: repoPromptsDir });
+    const swarmResponse = await postJson(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`, {
+      coordinatorModel: "opus",
+      workerModel: "haiku",
+    });
+    expect(swarmResponse.status).toBe(201);
+
+    const registry = await waitForRegistryDocument<{
+      terminals: Array<{ terminalId: string; model?: string; initialPrompt?: string }>;
+    }>(workspaceCwd, (document) =>
+      document.terminals.some((t) => t.terminalId === "docs-knowledge-swarm-parent"),
     );
+    const parent = registry.terminals.find((t) => t.terminalId === "docs-knowledge-swarm-parent");
+    expect(parent?.model).toBe("opus");
+    // Workers are spawned by the coordinator, so their model rides in the spawn commands.
+    expect(parent?.initialPrompt).toContain("--model 'haiku'");
+  });
+
+  it("rejects model names that could smuggle shell syntax into the agent command", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    writeSwarmTentacle(workspaceCwd, 2);
+
+    const baseUrl = await startServer({ workspaceCwd });
+    const swarm = await postJson(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`, {
+      workerModel: "haiku; rm -rf ~",
+    });
+    expect(swarm.status).toBe(400);
+
+    const terminal = await postJson(`${baseUrl}/api/terminals`, { model: "$(whoami)" });
+    expect(terminal.status).toBe(400);
   });
 
   it("deletes a tentacle and removes it from snapshots", async () => {
