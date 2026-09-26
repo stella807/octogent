@@ -98,6 +98,17 @@ Use `--from <terminal-id>` when sending on behalf of a worker or parent terminal
 octogent channel list <terminal-id>
 ```
 
+## Start a swarm
+
+```bash
+octogent swarm start <tentacle-id> [--workspace-mode shared|worktree]
+  [--worker-model haiku] [--coordinator-model opus]
+  [--budget 2000000] [--max-attempts 2]
+octogent swarm budget <tentacle-id>
+```
+
+Starts the same swarm as the UI's Spawn Swarm action, with the options the UI does not expose yet. `--budget` sets a token budget that the coordinator and all workers share. `--max-attempts 2` or `3` allows retries when an attempt runs out. `swarm budget` shows what each attempt spent and whether the swarm is still running or has stopped for good. See [Orchestrating Child Agents](../guides/orchestrating-child-agents.md#token-budgets).
+
 ## Work the swarm queue
 
 ```bash

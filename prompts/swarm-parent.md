@@ -42,6 +42,8 @@ node bin/octogent channel send <workerTerminalId> "STATUS?" --from {{terminalId}
 
 If any worker still returns `Target terminal not found`, create that worker terminal before continuing.
 
+{{budgetSection}}
+
 ## Swarm Queue
 
 {{queueSection}}

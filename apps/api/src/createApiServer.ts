@@ -12,12 +12,18 @@ import {
 import { createCodeIntelStore } from "./codeIntelStore";
 import { readCodexUsageSnapshot as readCodexUsageSnapshotDefault } from "./codexUsage";
 import { createApiRequestHandler } from "./createApiServer/requestHandler";
+import {
+  type SwarmBudgetEnforcer,
+  createSwarmBudgetEnforcer,
+} from "./createApiServer/swarmBudgetEnforcer";
 import type { CreateApiServerOptions } from "./createApiServer/types";
 import { createUpgradeHandler } from "./createApiServer/upgradeHandler";
+import { createSwarmBudgetStore } from "./deck/swarmBudget";
 import { createSwarmQueueStore } from "./deck/swarmQueue";
 import { readGithubRepoSummary as readGithubRepoSummaryDefault } from "./githubRepoSummary";
 import { createMonitorService } from "./monitor";
 import { createTerminalRuntime } from "./terminalRuntime";
+import { createTranscriptUsageReader } from "./terminalRuntime/transcriptUsage";
 
 export const createApiServer = ({
   workspaceCwd,
@@ -94,10 +100,19 @@ export const createApiServer = ({
         cwd: resolvedWorkspaceCwd,
       }));
 
+  // The runtime reports agent transcript activity to the budget enforcer, and
+  // the enforcer drives the runtime, so the enforcer is bound after both exist.
+  let swarmBudgetEnforcer: SwarmBudgetEnforcer | null = null;
+  const swarmBudgets = createSwarmBudgetStore({
+    onExceeded: (tentacleId, attempt) => swarmBudgetEnforcer?.handleExceeded(tentacleId, attempt),
+  });
+
   const runtimeOptions: Parameters<typeof createTerminalRuntime>[0] = {
     workspaceCwd: resolvedWorkspaceCwd,
     projectStateDir: resolvedStateDir,
     getApiBaseUrl,
+    onAgentTranscriptActivity: (terminalId, transcriptPath) =>
+      swarmBudgetEnforcer?.recordTranscriptActivity(terminalId, transcriptPath),
   };
   if (gitClient) {
     runtimeOptions.gitClient = gitClient;
@@ -115,6 +130,19 @@ export const createApiServer = ({
 
   const codeIntelStore = createCodeIntelStore(resolvedStateDir);
   const swarmQueues = createSwarmQueueStore();
+  const enforcer = createSwarmBudgetEnforcer({
+    launchDependencies: {
+      runtime,
+      workspaceCwd: resolvedWorkspaceCwd,
+      projectStateDir: resolvedStateDir,
+      promptsDir: resolvedPromptsDir,
+      getApiPort,
+      swarmQueues,
+    },
+    budgets: swarmBudgets,
+    usageReader: createTranscriptUsageReader(),
+  });
+  swarmBudgetEnforcer = enforcer;
 
   const requestHandler = createApiRequestHandler({
     runtime,
@@ -135,6 +163,8 @@ export const createApiServer = ({
     invalidateClaudeUsageCache,
     codeIntelStore,
     swarmQueues,
+    swarmBudgets,
+    swarmBudgetEnforcer: enforcer,
     allowRemoteAccess,
   });
 

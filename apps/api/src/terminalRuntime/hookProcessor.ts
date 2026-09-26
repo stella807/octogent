@@ -34,6 +34,7 @@ export const createHookProcessor = (deps: {
     state: TerminalSession["agentState"],
     toolName?: string,
   ) => void;
+  onTranscriptActivity?: (terminalId: string, transcriptPath: string) => void;
 }) => {
   const {
     terminals,
@@ -44,7 +45,19 @@ export const createHookProcessor = (deps: {
     deliverChannelMessages,
     releaseSessionKeepAlive,
     onStateChange,
+    onTranscriptActivity,
   } = deps;
+
+  // Every Claude hook payload carries `transcript_path`; reporting it on each
+  // tool call lets a budget stop a swarm mid-turn rather than only at turn end.
+  const reportTranscriptActivity = (terminalId: string, payload: Record<string, unknown>) => {
+    if (!onTranscriptActivity || typeof payload.transcript_path !== "string") return;
+    try {
+      onTranscriptActivity(terminalId, payload.transcript_path);
+    } catch (error) {
+      logVerbose(`[Hook] transcript activity handler failed: ${String(error)}`);
+    }
+  };
 
   const parseSettingsObject = (fileContents: string): Record<string, unknown> | null => {
     try {
@@ -214,6 +227,12 @@ export const createHookProcessor = (deps: {
     }
 
     const hookPayloadRecord = payload as Record<string, unknown>;
+
+    // Any registered terminal counts, live session or not: a stop hook can land
+    // just after its session closed, and those tokens were still spent.
+    if (octogentSessionId && terminals.has(octogentSessionId)) {
+      reportTranscriptActivity(octogentSessionId, hookPayloadRecord);
+    }
 
     if (hookName === "notification") {
       if (!octogentSessionId) {

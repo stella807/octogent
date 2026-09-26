@@ -654,6 +654,110 @@ const swarmClaim = async () => {
   }
 };
 
+const parseIntegerFlag = (flag: string): number | undefined => {
+  const raw = parseFlag(flag);
+  if (raw === undefined) return undefined;
+  const value = Number(raw.replace(/[_,]/g, ""));
+  if (!Number.isInteger(value)) {
+    console.error(`Error: ${flag} must be a whole number, got "${raw}".`);
+    process.exit(1);
+  }
+  return value;
+};
+
+const swarmStart = async () => {
+  const tentacleId = args[2];
+  if (!tentacleId || tentacleId.startsWith("-")) {
+    console.error("Error: tentacleId is required.");
+    process.exit(1);
+  }
+
+  const body: Record<string, unknown> = {};
+  const workspaceMode = parseFlag("--workspace-mode") ?? parseFlag("-w");
+  const workerModel = parseFlag("--worker-model");
+  const coordinatorModel = parseFlag("--coordinator-model");
+  const budgetTokens = parseIntegerFlag("--budget");
+  const maxAttempts = parseIntegerFlag("--max-attempts");
+  if (workspaceMode) body.workspaceMode = workspaceMode;
+  if (workerModel) body.workerModel = workerModel;
+  if (coordinatorModel) body.coordinatorModel = coordinatorModel;
+  if (budgetTokens !== undefined) body.budgetTokens = budgetTokens;
+  if (maxAttempts !== undefined) body.maxAttempts = maxAttempts;
+
+  const apiBase = resolveRuntimeApiBase();
+  try {
+    const response = await fetch(
+      `${apiBase}/api/deck/tentacles/${encodeURIComponent(tentacleId)}/swarm`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+    const data = (await response.json()) as {
+      parentTerminalId?: string | null;
+      workers?: Array<{ terminalId: string }>;
+      queuedItems?: unknown[];
+      budget?: { budgetTokens: number; maxAttempts: number };
+      error?: unknown;
+    };
+    if (!response.ok) {
+      console.error(`Error: ${data.error ?? "Failed"}`);
+      process.exit(1);
+    }
+    console.log(
+      `Started swarm for ${tentacleId}: ${data.workers?.length ?? 0} worker(s), ${data.queuedItems?.length ?? 0} queued item(s).`,
+    );
+    if (data.parentTerminalId) console.log(`Coordinator: ${data.parentTerminalId}`);
+    if (data.budget) {
+      console.log(
+        `Budget: ${data.budget.budgetTokens.toLocaleString("en-US")} tokens per attempt, up to ${data.budget.maxAttempts} attempt(s).`,
+      );
+    }
+  } catch {
+    apiError();
+  }
+};
+
+const swarmBudget = async () => {
+  const tentacleId = args[2];
+  if (!tentacleId || tentacleId.startsWith("-")) {
+    console.error("Error: tentacleId is required.");
+    process.exit(1);
+  }
+
+  const apiBase = resolveRuntimeApiBase();
+  try {
+    const response = await fetch(
+      `${apiBase}/api/deck/tentacles/${encodeURIComponent(tentacleId)}/swarm/budget`,
+    );
+    const data = (await response.json()) as {
+      budgetTokens?: number;
+      maxAttempts?: number;
+      outcome?: string;
+      totalSpentTokens?: number;
+      attempts?: Array<{ attempt: number; spentTokens: number; status: string }>;
+      error?: unknown;
+    };
+    if (!response.ok) {
+      console.error(`Error: ${data.error ?? "Failed"}`);
+      process.exit(1);
+    }
+    const fmt = (n: number | undefined) => (n ?? 0).toLocaleString("en-US");
+    console.log(
+      `Outcome: ${data.outcome}  (budget ${fmt(data.budgetTokens)} tokens per attempt, max ${data.maxAttempts} attempt(s))`,
+    );
+    for (const attempt of data.attempts ?? []) {
+      console.log(
+        `  attempt ${attempt.attempt}: ${fmt(attempt.spentTokens)} tokens, ${attempt.status}`,
+      );
+    }
+    console.log(`Total spent: ${fmt(data.totalSpentTokens)} tokens`);
+  } catch {
+    apiError();
+  }
+};
+
 const swarmQueue = async () => {
   const tentacleId = args[2];
   if (!tentacleId || tentacleId.startsWith("-")) {
@@ -749,6 +853,12 @@ const main = async () => {
   }
 
   if (command === "swarm") {
+    if (args[1] === "start") {
+      return swarmStart();
+    }
+    if (args[1] === "budget") {
+      return swarmBudget();
+    }
     if (args[1] === "claim") {
       return swarmClaim();
     }
@@ -781,6 +891,12 @@ const main = async () => {
   octogent terminal prune              Remove stale, stopped, and exited terminal records
   octogent channel send <id> <msg>     Send a channel message
   octogent channel list <id>           List channel messages
+  octogent swarm start <tentacleId>    Start a swarm over the tentacle's open todo items
+    --workspace-mode, -w               shared | worktree (default worktree)
+    --worker-model / --coordinator-model  Agent model per caste, e.g. haiku / opus
+    --budget                           Token budget shared by the whole swarm, per attempt
+    --max-attempts                     1-3; retries stop and relaunch unfinished items
+  octogent swarm budget <tentacleId>   Show a swarm's token spend and budget outcome
   octogent swarm claim <tentacleId>    Claim the next queued swarm item (--from <workerId>)
   octogent swarm queue <tentacleId>    Show queued and claimed swarm items`);
   process.exit(1);

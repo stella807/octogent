@@ -59,6 +59,31 @@ When a swarm has more than one target item, Octogent creates a parent terminal l
 
 The parent is intentionally not a magic scheduler. It is an agent session with explicit instructions and a visible terminal. That makes orchestration inspectable and interruptible.
 
+## Token budgets
+
+A swarm can be given one token budget that its coordinator and every worker draw from together:
+
+```bash
+octogent swarm start <tentacle-id> --budget 2000000 --max-attempts 2
+```
+
+Octogent reads each agent's Claude Code transcript on every tool call and turn end, and adds up input, output, and cache tokens the same way the usage chart does. When the shared total reaches the budget:
+
+1. every agent in that attempt is stopped at once, finished or not. Agents are stopped, not deleted, so worktree branches and their commits stay intact.
+2. if attempts remain and some items were not reported DONE, a fresh attempt starts on only those items, with a new coordinator, new workers (terminal IDs like `<tentacle-id>-swarm-a2-<index>`), and a fresh budget of the same size. The new coordinator is told what the last attempt spent, which items it finished, and which of its worker branches to merge.
+3. otherwise the swarm stops for good.
+
+Every stop is recorded in `.octogent/tentacles/<tentacle-id>/swarm-budget.md` with the spend per agent, what finished, what did not, and what to change. `octogent swarm budget <tentacle-id>` shows the same numbers.
+
+Things to know before relying on it:
+
+- **Retries cost money too.** The worst case is `budget x max-attempts`. Retries are capped at 3 attempts so a task that cannot fit its budget never loops forever.
+- **Tokens spent before a stop are still spent.** A budget caps the loss; it does not refund it.
+- **Enforcement lags by one tool call.** Usage is checked when an agent calls a tool or ends a turn, so the final total can overshoot by that last step.
+- **Claude Code only.** Codex terminals send no hooks, so swarms using Codex cannot take a budget.
+- **Subagents may be undercounted.** Octogent reads the transcript file each hook names. Claude Code versions that write subagent usage to separate files will have that usage missed, so keep a margin in the budget if workers use subagents.
+- **Budgets live in memory**, like channels and the swarm queue, and do not survive an API restart.
+
 ## Worker limits and identity
 
 Each parent can have up to 9 child terminals. If a swarm has more incomplete todo items than that, the first 9 in todo order each get a worker and the rest go into the swarm queue. After a worker reports DONE, it runs `octogent swarm claim` and takes the next queued item in its same session (and, in worktree mode, on its same branch). When the queue is empty it reports FINISHED, and the coordinator merges once every worker has.

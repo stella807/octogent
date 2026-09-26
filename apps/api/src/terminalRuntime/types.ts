@@ -188,6 +188,11 @@ export class RuntimeInputError extends Error {}
 
 export type CreateTerminalRuntimeOptions = {
   workspaceCwd: string;
+  /**
+   * Called with a Claude agent's transcript path on each tool call and turn
+   * end, so token budgets can be checked while the agent works.
+   */
+  onAgentTranscriptActivity?: (terminalId: string, transcriptPath: string) => void;
   projectStateDir?: string | undefined;
   gitClient?: GitClient;
   getApiBaseUrl?: () => string;

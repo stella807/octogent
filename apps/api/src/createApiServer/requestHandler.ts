@@ -7,6 +7,7 @@ import type { UsageChartResponse } from "../claudeSessionScanner";
 import type { ClaudeUsageSnapshot } from "../claudeUsage";
 import type { CodeIntelStore } from "../codeIntelStore";
 import type { CodexUsageSnapshot } from "../codexUsage";
+import type { SwarmBudgetStore } from "../deck/swarmBudget";
 import type { SwarmQueueStore } from "../deck/swarmQueue";
 import type { GitHubRepoSummarySnapshot } from "../githubRepoSummary";
 import { logVerbose } from "../logging";
@@ -59,6 +60,7 @@ import {
   isAllowedOriginHeader,
   readHeaderValue,
 } from "./security";
+import type { SwarmBudgetEnforcer } from "./swarmBudgetEnforcer";
 import {
   handleTerminalActionRoute,
   handleTerminalItemRoute,
@@ -106,6 +108,8 @@ type CreateApiRequestHandlerOptions = {
   invalidateClaudeUsageCache: () => void;
   codeIntelStore: CodeIntelStore;
   swarmQueues: SwarmQueueStore;
+  swarmBudgets: SwarmBudgetStore;
+  swarmBudgetEnforcer: SwarmBudgetEnforcer;
   allowRemoteAccess: boolean;
 };
 
@@ -219,6 +223,8 @@ export const createApiRequestHandler = ({
   invalidateClaudeUsageCache,
   codeIntelStore,
   swarmQueues,
+  swarmBudgets,
+  swarmBudgetEnforcer,
   allowRemoteAccess,
 }: CreateApiRequestHandlerOptions) => {
   const resolvedWebDistDir = webDistDir && existsSync(webDistDir) ? webDistDir : null;
@@ -241,6 +247,8 @@ export const createApiRequestHandler = ({
     invalidateClaudeUsageCache,
     codeIntelStore,
     swarmQueues,
+    swarmBudgets,
+    swarmBudgetEnforcer,
   };
 
   return async (request: IncomingMessage, response: ServerResponse) => {

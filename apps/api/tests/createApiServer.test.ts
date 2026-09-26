@@ -439,8 +439,15 @@ describe("createApiServer", () => {
 
     while (Date.now() < timeoutAt) {
       if (existsSync(registryPath)) {
-        const document = JSON.parse(readFileSync(registryPath, "utf8")) as TDocument;
-        if (predicate(document)) {
+        // Registry persistence is an async, non-atomic write, so a read can land
+        // mid-write; treat a truncated file as "not yet" and poll again.
+        let document: TDocument | null = null;
+        try {
+          document = JSON.parse(readFileSync(registryPath, "utf8")) as TDocument;
+        } catch {
+          document = null;
+        }
+        if (document && predicate(document)) {
           return document;
         }
       }
@@ -3123,6 +3130,172 @@ describe("createApiServer", () => {
     expect(parent?.model).toBe("opus");
     // Workers are spawned by the coordinator, so their model rides in the spawn commands.
     expect(parent?.initialPrompt).toContain("--model 'haiku'");
+  });
+
+  const writeTranscript = (workspaceCwd: string, name: string, tokens: number) => {
+    const path = join(workspaceCwd, `${name}.jsonl`);
+    writeFileSync(
+      path,
+      `${JSON.stringify({ type: "assistant", message: { id: name, usage: { output_tokens: tokens } } })}\n`,
+      "utf8",
+    );
+    return path;
+  };
+
+  // The same call Claude Code's PreToolUse hook makes for a running agent.
+  const reportToolUse = (baseUrl: string, terminalId: string, transcriptPath: string) =>
+    fetch(`${baseUrl}/api/hooks/pre-tool-use`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Octogent-Session": terminalId },
+      body: JSON.stringify({ tool_name: "Bash", transcript_path: transcriptPath }),
+    });
+
+  const waitForBudget = async (
+    baseUrl: string,
+    predicate: (budget: { outcome: string; attempts: unknown[] }) => boolean,
+  ) => {
+    const timeoutAt = Date.now() + 3_000;
+    while (Date.now() < timeoutAt) {
+      const response = await fetch(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm/budget`);
+      if (response.ok) {
+        const budget = (await response.json()) as { outcome: string; attempts: unknown[] };
+        if (predicate(budget)) return budget;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error("Timed out waiting for swarm budget state");
+  };
+
+  it("stops the whole swarm once its agents' shared usage reaches the budget", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    writeSwarmTentacle(workspaceCwd, 3);
+
+    const baseUrl = await startServer({ workspaceCwd, promptsDir: repoPromptsDir });
+    const swarm = await postJson(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`, {
+      workspaceMode: "shared",
+      budgetTokens: 5000,
+    });
+    expect(swarm.status).toBe(201);
+    await expect(swarm.json()).resolves.toMatchObject({
+      budget: { budgetTokens: 5000, maxAttempts: 1 },
+    });
+
+    // Under budget: nothing happens.
+    await reportToolUse(
+      baseUrl,
+      "docs-knowledge-swarm-parent",
+      writeTranscript(workspaceCwd, "parent-a", 3000),
+    );
+    const running = await waitForBudget(baseUrl, (b) => b.outcome === "running");
+    expect(running).toMatchObject({ totalSpentTokens: 3000 });
+
+    // A worker the coordinator spawned pushes the shared total over.
+    await postJson(`${baseUrl}/api/terminals`, {
+      terminalId: "docs-knowledge-swarm-0",
+      tentacleId: "docs-knowledge",
+      parentTerminalId: "docs-knowledge-swarm-parent",
+      workspaceMode: "shared",
+    });
+    await reportToolUse(
+      baseUrl,
+      "docs-knowledge-swarm-0",
+      writeTranscript(workspaceCwd, "worker-0", 2500),
+    );
+    const exhausted = await waitForBudget(baseUrl, (b) => b.outcome === "exhausted");
+    expect(exhausted).toMatchObject({
+      totalSpentTokens: 5500,
+      attempts: [{ attempt: 1, status: "exceeded", spentTokens: 5500 }],
+    });
+
+    const snapshots = (await (await fetch(`${baseUrl}/api/terminal-snapshots`)).json()) as Array<{
+      terminalId: string;
+      lifecycleState?: string;
+    }>;
+    expect(snapshots.find((t) => t.terminalId === "docs-knowledge-swarm-parent")).toMatchObject({
+      lifecycleState: "stopped",
+    });
+
+    const report = readFileSync(
+      join(workspaceCwd, ".octogent", "tentacles", "docs-knowledge", "swarm-budget.md"),
+      "utf8",
+    );
+    expect(report).toContain("5,500 of 5,000");
+    expect(report).toContain("item 2");
+    expect(report).toMatch(/raise the budget|smaller/i);
+  });
+
+  it("retries once with fresh agents on only the items not yet reported done", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    writeSwarmTentacle(workspaceCwd, 3);
+
+    const baseUrl = await startServer({ workspaceCwd, promptsDir: repoPromptsDir });
+    await postJson(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`, {
+      workspaceMode: "shared",
+      budgetTokens: 1000,
+      maxAttempts: 2,
+    });
+    await postJson(`${baseUrl}/api/channels/docs-knowledge-swarm-parent/messages`, {
+      fromTerminalId: "docs-knowledge-swarm-0",
+      content: "DONE: item 0",
+    });
+
+    await reportToolUse(
+      baseUrl,
+      "docs-knowledge-swarm-parent",
+      writeTranscript(workspaceCwd, "attempt-1", 1200),
+    );
+    const retrying = await waitForBudget(baseUrl, (b) => b.attempts.length === 2);
+    expect(retrying).toMatchObject({ outcome: "running", attempts: [{ status: "exceeded" }, {}] });
+
+    const registry = await waitForRegistryDocument<{
+      terminals: Array<{ terminalId: string; initialPrompt?: string }>;
+    }>(workspaceCwd, (document) =>
+      document.terminals.some((t) => t.terminalId === "docs-knowledge-swarm-a2-parent"),
+    );
+    const retryPrompt =
+      registry.terminals.find((t) => t.terminalId === "docs-knowledge-swarm-a2-parent")
+        ?.initialPrompt ?? "";
+    expect(retryPrompt).toContain("attempt 2 of 2");
+    expect(retryPrompt).toContain("docs-knowledge-swarm-a2-1");
+    expect(retryPrompt).toContain("docs-knowledge-swarm-a2-2");
+    expect(retryPrompt).not.toContain("docs-knowledge-swarm-a2-0");
+
+    // The retry's own agents draw from a fresh budget; running out again is final.
+    await reportToolUse(
+      baseUrl,
+      "docs-knowledge-swarm-a2-parent",
+      writeTranscript(workspaceCwd, "attempt-2", 1500),
+    );
+    const exhausted = await waitForBudget(baseUrl, (b) => b.outcome === "exhausted");
+    expect(exhausted).toMatchObject({ totalSpentTokens: 2700 });
+  });
+
+  it("validates budget settings before starting any agents", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    writeSwarmTentacle(workspaceCwd, 2);
+
+    const baseUrl = await startServer({ workspaceCwd, promptsDir: repoPromptsDir });
+    const swarmUrl = `${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`;
+    for (const body of [
+      { budgetTokens: -5 },
+      { budgetTokens: 1.5 },
+      { budgetTokens: "lots" },
+      { budgetTokens: 5000, maxAttempts: 4 },
+      { maxAttempts: 2 },
+      // Codex terminals send no Claude hooks, so their spend cannot be counted.
+      { budgetTokens: 5000, agentProvider: "codex" },
+    ]) {
+      const response = await postJson(swarmUrl, body);
+      expect(response.status, JSON.stringify(body)).toBe(400);
+    }
+
+    const snapshots = (await (
+      await fetch(`${baseUrl}/api/terminal-snapshots`)
+    ).json()) as unknown[];
+    expect(snapshots).toHaveLength(0);
   });
 
   it("rejects model names that could smuggle shell syntax into the agent command", async () => {

@@ -65,6 +65,7 @@ export const createTerminalRuntime = ({
   gitClient = createDefaultGitClient(),
   getApiBaseUrl = () => process.env.OCTOGENT_API_ORIGIN ?? "http://127.0.0.1:8787",
   maxConcurrentSessions,
+  onAgentTranscriptActivity,
 }: CreateTerminalRuntimeOptions) => {
   const stateDir = projectStateDir ?? join(workspaceCwd, ".octogent");
   const sessions = new Map<string, TerminalSession>();
@@ -277,6 +278,7 @@ export const createTerminalRuntime = ({
     deliverChannelMessages: channelMessaging.deliverChannelMessages,
     releaseSessionKeepAlive: sessionRuntime.releaseSessionKeepAlive,
     onStateChange: broadcastTerminalStateChanged,
+    ...(onAgentTranscriptActivity ? { onTranscriptActivity: onAgentTranscriptActivity } : {}),
   });
 
   reconcilePersistedLifecycle();

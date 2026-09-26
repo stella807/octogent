@@ -4,11 +4,13 @@ import type { UsageChartResponse } from "../claudeSessionScanner";
 import type { ClaudeUsageSnapshot } from "../claudeUsage";
 import type { CodeIntelStore } from "../codeIntelStore";
 import type { CodexUsageSnapshot } from "../codexUsage";
+import type { SwarmBudgetStore } from "../deck/swarmBudget";
 import type { SwarmQueueStore } from "../deck/swarmQueue";
 import type { GitHubRepoSummarySnapshot } from "../githubRepoSummary";
 import type { MonitorService } from "../monitor";
 import { RequestBodyTooLargeError, readJsonBody } from "./requestParsers";
 import { withCors } from "./security";
+import type { SwarmBudgetEnforcer } from "./swarmBudgetEnforcer";
 
 export type TerminalRuntime = ReturnType<typeof import("../terminalRuntime").createTerminalRuntime>;
 
@@ -30,6 +32,8 @@ export type RouteHandlerDependencies = {
   invalidateClaudeUsageCache: () => void;
   codeIntelStore: CodeIntelStore;
   swarmQueues: SwarmQueueStore;
+  swarmBudgets: SwarmBudgetStore;
+  swarmBudgetEnforcer: SwarmBudgetEnforcer;
 };
 
 export type RouteHandlerContext = {
