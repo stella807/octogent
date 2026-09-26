@@ -38,3 +38,45 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  tools:
+    # quant-bot and bounty-watch are standalone packages with their own
+    # lockfiles, outside pnpm-workspace.yaml, so `pnpm test` above never
+    # reaches them. Without this job quant-bot shipped with a source
+    # directory missing and nothing went red.
+    name: Typecheck, Test (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [quant-bot, bounty-watch]
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.4.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ${{ matrix.package }}/pnpm-lock.yaml
+
+      - name: Install dependencies
+        # Without --ignore-workspace pnpm installs the root workspace instead.
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
