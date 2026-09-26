@@ -1,7 +1,7 @@
-import type { Candle, EquityPoint, Trade } from '../domain/types.ts';
-import type { Params, StrategyFactory } from '../strategy/types.ts';
-import { DEFAULT_CONFIG, runBacktest, type BacktestConfig, type BacktestResult } from './engine.ts';
-import { computeMetrics, type Metrics } from './metrics.ts';
+import type { Candle, EquityPoint, Trade } from "../domain/types.ts";
+import type { Params, StrategyFactory } from "../strategy/types.ts";
+import { type BacktestConfig, type BacktestResult, DEFAULT_CONFIG, runBacktest } from "./engine.ts";
+import { type Metrics, computeMetrics } from "./metrics.ts";
 
 /**
  * Walk-forward analysis: the difference between a strategy that works and a
@@ -15,7 +15,7 @@ import { computeMetrics, type Metrics } from './metrics.ts';
  * purely so the report can show the gap between them, which is the honest
  * measure of how much of the "edge" was curve fitting.
  */
-export type Objective = 'calmar' | 'sharpe' | 'sortino' | 'return' | 'profitFactor';
+export type Objective = "calmar" | "sharpe" | "sortino" | "return" | "profitFactor";
 
 export interface WalkForwardOptions {
   readonly folds: number;
@@ -30,7 +30,7 @@ export interface WalkForwardOptions {
 export const DEFAULT_WF_OPTIONS: WalkForwardOptions = {
   folds: 5,
   inSampleRatio: 0.7,
-  objective: 'calmar',
+  objective: "calmar",
   anchored: false,
   config: DEFAULT_CONFIG,
 };
@@ -180,11 +180,16 @@ export function walkForward(
 
 /** The objective value itself, with no sample-size penalty applied. */
 export function rawScore(metrics: Metrics, objective: Objective): number {
-  const raw = objective === 'calmar' ? metrics.calmar
-    : objective === 'sharpe' ? metrics.sharpe
-    : objective === 'sortino' ? metrics.sortino
-    : objective === 'return' ? metrics.totalReturnPct
-    : metrics.profitFactor;
+  const raw =
+    objective === "calmar"
+      ? metrics.calmar
+      : objective === "sharpe"
+        ? metrics.sharpe
+        : objective === "sortino"
+          ? metrics.sortino
+          : objective === "return"
+            ? metrics.totalReturnPct
+            : metrics.profitFactor;
   // Infinity here means "no losing trades yet", which is a sample-size
   // artefact rather than a perfect strategy, so it must not win a ranking.
   return Number.isFinite(raw) ? raw : 0;

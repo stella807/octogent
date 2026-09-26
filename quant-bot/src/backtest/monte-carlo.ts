@@ -1,4 +1,4 @@
-import type { Trade } from '../domain/types.ts';
+import type { Trade } from "../domain/types.ts";
 
 /**
  * Resample the realised trades to ask the question a single backtest cannot:
@@ -47,11 +47,9 @@ export function monteCarlo(
   options: MonteCarloOptions = DEFAULT_MC_OPTIONS,
 ): MonteCarloResult {
   if (trades.length < 2) {
-    throw new RangeError(
-      `monte carlo needs at least 2 trades to resample, got ${trades.length}`,
-    );
+    throw new RangeError(`monte carlo needs at least 2 trades to resample, got ${trades.length}`);
   }
-  if (startingEquity <= 0) throw new RangeError('startingEquity must be > 0');
+  if (startingEquity <= 0) throw new RangeError("startingEquity must be > 0");
 
   const random = mulberry32(options.seed);
   // Resample each trade's return on TOTAL EQUITY, not its return on the

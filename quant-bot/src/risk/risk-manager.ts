@@ -35,7 +35,7 @@ export const DEFAULT_LIMITS: RiskLimits = {
   minEquity: 0,
 };
 
-export type HaltKind = 'none' | 'daily-loss' | 'max-drawdown' | 'min-equity';
+export type HaltKind = "none" | "daily-loss" | "max-drawdown" | "min-equity";
 
 export interface RiskState {
   readonly halt: HaltKind;
@@ -57,7 +57,7 @@ export class RiskManager {
   #dayIndex: number;
   #dailyHaltedDay: number | null = null;
   #killed = false;
-  #killReason: HaltKind = 'none';
+  #killReason: HaltKind = "none";
 
   constructor(startingEquity: number, limits: RiskLimits = DEFAULT_LIMITS) {
     validate(limits);
@@ -86,41 +86,54 @@ export class RiskManager {
     }
 
     if (equity > this.#peakEquity) this.#peakEquity = equity;
-    const drawdownPct = this.#peakEquity > 0
-      ? ((this.#peakEquity - equity) / this.#peakEquity) * 100
-      : 0;
-    const dayLossPct = this.#dayStartEquity > 0
-      ? ((this.#dayStartEquity - equity) / this.#dayStartEquity) * 100
-      : 0;
+    const drawdownPct =
+      this.#peakEquity > 0 ? ((this.#peakEquity - equity) / this.#peakEquity) * 100 : 0;
+    const dayLossPct =
+      this.#dayStartEquity > 0 ? ((this.#dayStartEquity - equity) / this.#dayStartEquity) * 100 : 0;
 
     if (!this.#killed) {
       if (equity <= this.limits.minEquity) {
         this.#killed = true;
-        this.#killReason = 'min-equity';
+        this.#killReason = "min-equity";
       } else if (drawdownPct >= this.limits.maxDrawdownPct) {
         this.#killed = true;
-        this.#killReason = 'max-drawdown';
+        this.#killReason = "max-drawdown";
       }
     }
 
     if (this.#killed) {
-      return this.#state(this.#killReason, true, drawdownPct, dayLossPct,
-        this.#killReason === 'min-equity'
+      return this.#state(
+        this.#killReason,
+        true,
+        drawdownPct,
+        dayLossPct,
+        this.#killReason === "min-equity"
           ? `equity ${equity.toFixed(2)} at or below floor ${this.limits.minEquity}`
-          : `drawdown ${drawdownPct.toFixed(2)}% hit the ${this.limits.maxDrawdownPct}% kill switch`);
+          : `drawdown ${drawdownPct.toFixed(2)}% hit the ${this.limits.maxDrawdownPct}% kill switch`,
+      );
     }
 
     if (this.#dailyHaltedDay === day) {
-      return this.#state('daily-loss', true, drawdownPct, dayLossPct,
-        `trading paused for the day after a ${dayLossPct.toFixed(2)}% loss`);
+      return this.#state(
+        "daily-loss",
+        true,
+        drawdownPct,
+        dayLossPct,
+        `trading paused for the day after a ${dayLossPct.toFixed(2)}% loss`,
+      );
     }
     if (dayLossPct >= this.limits.maxDailyLossPct) {
       this.#dailyHaltedDay = day;
-      return this.#state('daily-loss', true, drawdownPct, dayLossPct,
-        `daily loss ${dayLossPct.toFixed(2)}% hit the ${this.limits.maxDailyLossPct}% limit`);
+      return this.#state(
+        "daily-loss",
+        true,
+        drawdownPct,
+        dayLossPct,
+        `daily loss ${dayLossPct.toFixed(2)}% hit the ${this.limits.maxDailyLossPct}% limit`,
+      );
     }
 
-    return this.#state('none', false, drawdownPct, dayLossPct, 'within limits');
+    return this.#state("none", false, drawdownPct, dayLossPct, "within limits");
   }
 
   /** True once the drawdown or equity-floor kill switch has fired. Never resets. */
@@ -171,10 +184,10 @@ export class RiskManager {
 
 function validate(limits: RiskLimits): void {
   const positive: (keyof RiskLimits)[] = [
-    'riskPerTradePct',
-    'maxPositionPct',
-    'maxDailyLossPct',
-    'maxDrawdownPct',
+    "riskPerTradePct",
+    "maxPositionPct",
+    "maxDailyLossPct",
+    "maxDrawdownPct",
   ];
   for (const key of positive) {
     const value = limits[key];

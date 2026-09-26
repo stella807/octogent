@@ -1,6 +1,6 @@
-import type { EquityPoint, Timeframe, Trade } from '../domain/types.ts';
-import { TIMEFRAME_MS } from '../domain/types.ts';
-import type { BacktestResult } from './engine.ts';
+import type { EquityPoint, Timeframe, Trade } from "../domain/types.ts";
+import { TIMEFRAME_MS } from "../domain/types.ts";
+import type { BacktestResult } from "./engine.ts";
 
 /**
  * Performance statistics, chosen so the unflattering ones are impossible to
@@ -55,9 +55,10 @@ export function computeMetrics(result: BacktestResult): Metrics {
 
   const totalReturnPct = ((endingEquity - startingEquity) / startingEquity) * 100;
   const years = equityCurve.length > 0 ? equityCurve.length / barsPerYear : 0;
-  const cagrPct = years > 0 && startingEquity > 0 && endingEquity > 0
-    ? ((endingEquity / startingEquity) ** (1 / years) - 1) * 100
-    : 0;
+  const cagrPct =
+    years > 0 && startingEquity > 0 && endingEquity > 0
+      ? ((endingEquity / startingEquity) ** (1 / years) - 1) * 100
+      : 0;
 
   const avgWin = wins.length > 0 ? grossWin / wins.length : 0;
   const avgLoss = losses.length > 0 ? grossLoss / losses.length : 0;
@@ -82,18 +83,19 @@ export function computeMetrics(result: BacktestResult): Metrics {
     lossRatePct: trades.length > 0 ? (losses.length / trades.length) * 100 : 0,
     // Infinity here means "no losing trades in this sample", which is a sign
     // the sample is too small, not a sign the strategy cannot lose.
-    profitFactor: grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? Infinity : 0),
+    profitFactor:
+      grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? Number.POSITIVE_INFINITY : 0,
     expectancy: trades.length > 0 ? (grossWin - grossLoss) / trades.length : 0,
     avgWin,
     avgLoss,
-    payoffRatio: avgLoss > 0 ? avgWin / avgLoss : (avgWin > 0 ? Infinity : 0),
+    payoffRatio: avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? Number.POSITIVE_INFINITY : 0,
     largestWin: wins.reduce((a, t) => Math.max(a, t.pnl), 0),
     largestLoss: losses.reduce((a, t) => Math.min(a, t.pnl), 0),
     maxConsecutiveLosses: maxLosingStreak(trades),
     totalFees: trades.reduce((a, t) => a + t.fees, 0),
     timeInMarketPct: equityCurve.length > 0 ? (inMarket / equityCurve.length) * 100 : 0,
     avgExposurePct: equityCurve.length > 0 ? (exposureSum / equityCurve.length) * 100 : 0,
-    stoppedOutCount: trades.filter((t) => t.exitReason === 'stop').length,
+    stoppedOutCount: trades.filter((t) => t.exitReason === "stop").length,
   };
 }
 
@@ -146,8 +148,8 @@ function annualisedRatio(
   const mean = returns.reduce((a, r) => a + r, 0) / returns.length;
   const sample = downsideOnly ? returns.filter((r) => r < 0) : returns;
   if (sample.length < 2) return 0;
-  const variance = sample.reduce((a, r) => a + (downsideOnly ? r * r : (r - mean) ** 2), 0)
-    / (sample.length - 1);
+  const variance =
+    sample.reduce((a, r) => a + (downsideOnly ? r * r : (r - mean) ** 2), 0) / (sample.length - 1);
   const sd = Math.sqrt(variance);
   if (sd === 0) return 0;
   return (mean / sd) * Math.sqrt(barsPerYear);

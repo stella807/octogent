@@ -1,7 +1,7 @@
-import type { Candle } from '../domain/types.ts';
-import { param, type Params } from '../strategy/types.ts';
-import type { AlignedSeries } from './align.ts';
-import type { PortfolioStrategy, PortfolioStrategyFactory } from './types.ts';
+import type { Candle } from "../domain/types.ts";
+import { type Params, param } from "../strategy/types.ts";
+import type { AlignedSeries } from "./align.ts";
+import type { PortfolioStrategy, PortfolioStrategyFactory } from "./types.ts";
 
 /**
  * Dual momentum: hold the strongest few symbols, but only while they are also
@@ -19,7 +19,7 @@ import type { PortfolioStrategy, PortfolioStrategyFactory } from './types.ts';
  * the exact moment breadth is collapsing.
  */
 export const crossSectionalMomentum: PortfolioStrategyFactory = {
-  name: 'cross-sectional-momentum',
+  name: "cross-sectional-momentum",
   defaults: { lookback: 90, topK: 3, rebalanceEvery: 7, absoluteFilter: 1 },
   grid: {
     lookback: [30, 60, 90, 180],
@@ -27,10 +27,10 @@ export const crossSectionalMomentum: PortfolioStrategyFactory = {
     rebalanceEvery: [7, 14, 30],
   },
   create(series: AlignedSeries, params: Params): PortfolioStrategy {
-    const lookback = param(params, 'lookback', 90);
-    const topK = Math.max(1, Math.trunc(param(params, 'topK', 3)));
-    const rebalanceEvery = Math.max(1, Math.trunc(param(params, 'rebalanceEvery', 7)));
-    const absoluteFilter = param(params, 'absoluteFilter', 1) > 0;
+    const lookback = param(params, "lookback", 90);
+    const topK = Math.max(1, Math.trunc(param(params, "topK", 3)));
+    const rebalanceEvery = Math.max(1, Math.trunc(param(params, "rebalanceEvery", 7)));
+    const absoluteFilter = param(params, "absoluteFilter", 1) > 0;
     if (lookback < 2) throw new RangeError(`lookback must be >= 2, got ${lookback}`);
 
     const count = series.symbols.length;
@@ -44,7 +44,7 @@ export const crossSectionalMomentum: PortfolioStrategyFactory = {
     };
 
     return {
-      name: 'cross-sectional-momentum',
+      name: "cross-sectional-momentum",
       params: { lookback, topK, rebalanceEvery, absoluteFilter: absoluteFilter ? 1 : 0 },
       warmup: lookback + rebalanceEvery,
       weightsAt(i: number): readonly number[] {

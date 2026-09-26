@@ -1,8 +1,8 @@
-import type { Candle, Timeframe } from '../domain/types.ts';
-import type { Balance, Broker, Fill } from './broker.ts';
+import type { Candle, Timeframe } from "../domain/types.ts";
+import type { Balance, Broker, Fill } from "./broker.ts";
 
-export const LIVE_CONFIRM_ENV = 'QUANT_BOT_LIVE_CONFIRM';
-export const LIVE_CONFIRM_VALUE = 'yes-i-accept-the-risk';
+export const LIVE_CONFIRM_ENV = "QUANT_BOT_LIVE_CONFIRM";
+export const LIVE_CONFIRM_VALUE = "yes-i-accept-the-risk";
 
 export interface ExchangeBrokerOptions {
   readonly exchange: string;
@@ -35,7 +35,7 @@ export class ExchangeBroker implements Broker {
       );
     }
     if (!options.apiKey || !options.secret) {
-      throw new Error('live trading needs API credentials; see .env.example');
+      throw new Error("live trading needs API credentials; see .env.example");
     }
     this.#options = options;
     this.#quote = options.quoteCurrency;
@@ -46,11 +46,11 @@ export class ExchangeBroker implements Broker {
    * Builds from environment variables so credentials never enter argv, where
    * they would be visible in shell history and in `ps` output.
    */
-  static fromEnv(exchange: string, quoteCurrency = 'USDT'): ExchangeBroker {
+  static fromEnv(exchange: string, quoteCurrency = "USDT"): ExchangeBroker {
     return new ExchangeBroker({
       exchange,
-      apiKey: process.env['QUANT_BOT_API_KEY'] ?? '',
-      secret: process.env['QUANT_BOT_API_SECRET'] ?? '',
+      apiKey: process.env.QUANT_BOT_API_KEY ?? "",
+      secret: process.env.QUANT_BOT_API_SECRET ?? "",
       quoteCurrency,
     });
   }
@@ -58,7 +58,7 @@ export class ExchangeBroker implements Broker {
   async balance(symbol: string): Promise<Balance> {
     const client = await this.#connect();
     const balances = await client.fetchBalance();
-    const base = symbol.split('/')[0] ?? '';
+    const base = symbol.split("/")[0] ?? "";
     return {
       cash: Number(balances.free?.[this.#quote] ?? 0),
       qty: Number(balances.free?.[base] ?? 0),
@@ -69,7 +69,7 @@ export class ExchangeBroker implements Broker {
     const client = await this.#connect();
     const ticker = await client.fetchTicker(symbol);
     const price = ticker.last ?? ticker.close;
-    if (typeof price !== 'number' || !Number.isFinite(price)) {
+    if (typeof price !== "number" || !Number.isFinite(price)) {
       throw new Error(`exchange returned no usable price for ${symbol}`);
     }
     return price;
@@ -95,21 +95,21 @@ export class ExchangeBroker implements Broker {
     const price = await this.lastPrice(symbol);
     const qty = quoteAmount / price;
     const order = await client.createMarketBuyOrder(symbol, qty);
-    return toFill('buy', order, price, qty);
+    return toFill("buy", order, price, qty);
   }
 
   async marketSell(symbol: string, qty: number): Promise<Fill> {
     const client = await this.#connect();
     const price = await this.lastPrice(symbol);
     const order = await client.createMarketSellOrder(symbol, qty);
-    return toFill('sell', order, price, qty);
+    return toFill("sell", order, price, qty);
   }
 
   async #connect(): Promise<CcxtClient> {
     if (this.#client) return this.#client;
-    const ccxt = (await import('ccxt')) as unknown as Record<string, unknown>;
+    const ccxt = (await import("ccxt")) as unknown as Record<string, unknown>;
     const ExchangeClass = ccxt[this.#options.exchange];
-    if (typeof ExchangeClass !== 'function') {
+    if (typeof ExchangeClass !== "function") {
       throw new Error(`ccxt has no exchange named "${this.#options.exchange}"`);
     }
     this.#client = new (ExchangeClass as new (cfg: unknown) => CcxtClient)({
@@ -132,12 +132,22 @@ interface CcxtOrder {
 interface CcxtClient {
   fetchBalance(): Promise<{ free?: Record<string, number> }>;
   fetchTicker(symbol: string): Promise<{ last?: number; close?: number }>;
-  fetchOHLCV(symbol: string, timeframe: string, since?: number, limit?: number): Promise<(number | undefined)[][]>;
+  fetchOHLCV(
+    symbol: string,
+    timeframe: string,
+    since?: number,
+    limit?: number,
+  ): Promise<(number | undefined)[][]>;
   createMarketBuyOrder(symbol: string, qty: number): Promise<CcxtOrder>;
   createMarketSellOrder(symbol: string, qty: number): Promise<CcxtOrder>;
 }
 
-function toFill(side: 'buy' | 'sell', order: CcxtOrder, fallbackPrice: number, fallbackQty: number): Fill {
+function toFill(
+  side: "buy" | "sell",
+  order: CcxtOrder,
+  fallbackPrice: number,
+  fallbackQty: number,
+): Fill {
   return {
     side,
     qty: order.filled ?? fallbackQty,

@@ -1,7 +1,7 @@
-import type { Candle, Position, Signal } from '../domain/types.ts';
-import { FLAT } from '../domain/types.ts';
-import { atr, closes, rollingMax, rollingMin } from '../indicators/index.ts';
-import { param, type Params, type Strategy, type StrategyFactory } from './types.ts';
+import type { Candle, Position, Signal } from "../domain/types.ts";
+import { FLAT } from "../domain/types.ts";
+import { atr, closes, rollingMax, rollingMin } from "../indicators/index.ts";
+import { type Params, type Strategy, type StrategyFactory, param } from "./types.ts";
 
 /**
  * Enter when price closes at a new `entry`-bar high, exit at an `exit`-bar low
@@ -10,7 +10,7 @@ import { param, type Params, type Strategy, type StrategyFactory } from './types
  * whipsaws, which is where most of this family's edge lives.
  */
 export const donchianBreakout: StrategyFactory = {
-  name: 'donchian-breakout',
+  name: "donchian-breakout",
   defaults: { entry: 55, exit: 20, atrPeriod: 14, atrStopMult: 2.5 },
   grid: {
     entry: [20, 40, 55, 80],
@@ -18,10 +18,10 @@ export const donchianBreakout: StrategyFactory = {
     atrStopMult: [2, 2.5, 3.5],
   },
   create(candles: readonly Candle[], params: Params): Strategy {
-    const entry = param(params, 'entry', 55);
-    const exit = param(params, 'exit', 20);
-    const atrPeriod = param(params, 'atrPeriod', 14);
-    const stopMult = param(params, 'atrStopMult', 2.5);
+    const entry = param(params, "entry", 55);
+    const exit = param(params, "exit", 20);
+    const atrPeriod = param(params, "atrPeriod", 14);
+    const stopMult = param(params, "atrStopMult", 2.5);
     if (exit >= entry) {
       throw new RangeError(`donchian needs exit < entry, got ${exit} >= ${entry}`);
     }
@@ -34,7 +34,7 @@ export const donchianBreakout: StrategyFactory = {
     const atrLine = atr(candles, atrPeriod);
 
     return {
-      name: 'donchian-breakout',
+      name: "donchian-breakout",
       params: { entry, exit, atrPeriod, atrStopMult: stopMult },
       warmup: entry + atrPeriod + 1,
       signalAt(i: number, position: Position | null): Signal {
@@ -46,7 +46,7 @@ export const donchianBreakout: StrategyFactory = {
         const atrValue = atrLine[i] ?? 0;
 
         if (position === null) {
-          if (close <= priorHigh) return { target: 0, reason: 'no breakout' };
+          if (close <= priorHigh) return { target: 0, reason: "no breakout" };
           return {
             target: 1,
             stopPrice: close - stopMult * atrValue,
@@ -61,7 +61,7 @@ export const donchianBreakout: StrategyFactory = {
         return {
           target: 1,
           stopPrice: Math.max(position.stopPrice ?? raw, raw),
-          reason: 'holding breakout',
+          reason: "holding breakout",
         };
       },
     };

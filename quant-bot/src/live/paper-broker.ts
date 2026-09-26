@@ -1,6 +1,12 @@
-import type { Candle, Timeframe } from '../domain/types.ts';
-import { buyFillPrice, DEFAULT_COSTS, feeOn, sellFillPrice, type CostModel } from '../backtest/costs.ts';
-import type { Balance, Broker, Fill } from './broker.ts';
+import {
+  type CostModel,
+  DEFAULT_COSTS,
+  buyFillPrice,
+  feeOn,
+  sellFillPrice,
+} from "../backtest/costs.ts";
+import type { Candle, Timeframe } from "../domain/types.ts";
+import type { Balance, Broker, Fill } from "./broker.ts";
 
 export interface PaperBrokerOptions {
   readonly startingCash: number;
@@ -19,14 +25,14 @@ export interface PaperBrokerOptions {
  * unless a human passes --live and sets the confirmation environment variable.
  */
 export class PaperBroker implements Broker {
-  readonly id = 'paper';
+  readonly id = "paper";
   readonly isLive = false;
   readonly fills: Fill[] = [];
 
   #cash: number;
   #qty = 0;
   readonly #costs: CostModel;
-  readonly #feed: PaperBrokerOptions['feed'];
+  readonly #feed: PaperBrokerOptions["feed"];
 
   constructor(options: PaperBrokerOptions) {
     this.#cash = options.startingCash;
@@ -39,7 +45,7 @@ export class PaperBroker implements Broker {
   }
 
   async lastPrice(symbol: string): Promise<number> {
-    const candles = await this.#feed(symbol, '1m', 2);
+    const candles = await this.#feed(symbol, "1m", 2);
     const last = candles[candles.length - 1];
     if (!last) throw new Error(`no price available for ${symbol}`);
     return last.close;
@@ -57,7 +63,7 @@ export class PaperBroker implements Broker {
     if (qty <= 0) throw new Error(`insufficient cash to buy ${symbol}: have ${this.#cash}`);
     this.#cash -= spend;
     this.#qty += qty;
-    return this.#record({ side: 'buy', qty, price, fee, time: Date.now() });
+    return this.#record({ side: "buy", qty, price, fee, time: Date.now() });
   }
 
   async marketSell(symbol: string, qty: number): Promise<Fill> {
@@ -68,7 +74,7 @@ export class PaperBroker implements Broker {
     const fee = feeOn(notional, this.#costs);
     this.#qty -= sellQty;
     this.#cash += notional - fee;
-    return this.#record({ side: 'sell', qty: sellQty, price, fee, time: Date.now() });
+    return this.#record({ side: "sell", qty: sellQty, price, fee, time: Date.now() });
   }
 
   #record(fill: Fill): Fill {

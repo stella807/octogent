@@ -1,15 +1,15 @@
-import type { Candle, EquityPoint, ExitReason, Trade } from '../domain/types.ts';
-import { buyFillPrice, feeOn, sellFillPrice } from '../backtest/costs.ts';
-import type { BacktestConfig, BacktestResult, HaltRecord } from '../backtest/engine.ts';
-import { RiskManager } from '../risk/risk-manager.ts';
-import type { AlignedSeries } from './align.ts';
-import type { PortfolioStrategy } from './types.ts';
+import { buyFillPrice, feeOn, sellFillPrice } from "../backtest/costs.ts";
+import type { BacktestConfig, BacktestResult, HaltRecord } from "../backtest/engine.ts";
+import type { Candle, EquityPoint, ExitReason, Trade } from "../domain/types.ts";
+import { RiskManager } from "../risk/risk-manager.ts";
+import type { AlignedSeries } from "./align.ts";
+import type { PortfolioStrategy } from "./types.ts";
 
 export interface PortfolioTrade extends Trade {
   readonly symbol: string;
 }
 
-export interface PortfolioResult extends Omit<BacktestResult, 'trades'> {
+export interface PortfolioResult extends Omit<BacktestResult, "trades"> {
   readonly trades: readonly PortfolioTrade[];
   readonly symbols: readonly string[];
   /** Per-symbol contribution to total P&L, in quote currency. */
@@ -71,7 +71,8 @@ export function runPortfolioBacktest(
   let lastWeights: number[] = new Array(count).fill(0);
   let firstHalt: HaltRecord | null = null;
 
-  const barAt = (s: number, i: number): Candle => (series.bars[s] as readonly Candle[])[i] as Candle;
+  const barAt = (s: number, i: number): Candle =>
+    (series.bars[s] as readonly Candle[])[i] as Candle;
 
   const sell = (s: number, qty: number, price: number, i: number, reason: ExitReason): void => {
     const holding = holdings[s];
@@ -80,7 +81,7 @@ export function runPortfolioBacktest(
     const notional = sellQty * price;
     // Same exchange minimum the single-asset engine enforces; the end-of-data
     // liquidation is an accounting close rather than an order, so it is exempt.
-    if (reason !== 'end-of-data' && notional < costs.minOrderNotional) {
+    if (reason !== "end-of-data" && notional < costs.minOrderNotional) {
       rejectedOrders += 1;
       return;
     }
@@ -154,10 +155,8 @@ export function runPortfolioBacktest(
     // 1. Rebalance to the weights decided at the last close, at this bar's opens.
     if (pending) {
       const opens = series.symbols.map((_, s) => barAt(s, i).open);
-      const equity = cash + holdings.reduce(
-        (acc, h, s) => acc + (h ? h.qty * (opens[s] as number) : 0),
-        0,
-      );
+      const equity =
+        cash + holdings.reduce((acc, h, s) => acc + (h ? h.qty * (opens[s] as number) : 0), 0);
       const desired = normalise(pending);
 
       // Sells first: they free the cash the buys are about to need.
@@ -167,7 +166,7 @@ export function runPortfolioBacktest(
         const targetQty = (equity * (desired[s] as number)) / open;
         const delta = targetQty - held;
         if (delta < 0 && Math.abs(delta) * open >= equity * MIN_WEIGHT_MOVE) {
-          sell(s, -delta, sellFillPrice(open, costs), i, 'signal');
+          sell(s, -delta, sellFillPrice(open, costs), i, "signal");
         }
       }
       for (let s = 0; s < count; s += 1) {
@@ -203,7 +202,7 @@ export function runPortfolioBacktest(
       for (let s = 0; s < count; s += 1) {
         const holding = holdings[s];
         if (holding) {
-          sell(s, holding.qty, sellFillPrice(barAt(s, i).close, costs), i, 'risk-halt');
+          sell(s, holding.qty, sellFillPrice(barAt(s, i).close, costs), i, "risk-halt");
         }
       }
       if (firstHalt === null) {
@@ -226,7 +225,7 @@ export function runPortfolioBacktest(
     for (let s = 0; s < count; s += 1) {
       const holding = holdings[s];
       if (holding) {
-        sell(s, holding.qty, sellFillPrice(barAt(s, n - 1).close, costs), n - 1, 'end-of-data');
+        sell(s, holding.qty, sellFillPrice(barAt(s, n - 1).close, costs), n - 1, "end-of-data");
       }
     }
   }

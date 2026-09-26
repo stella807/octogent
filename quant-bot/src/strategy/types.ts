@@ -1,4 +1,4 @@
-import type { Candle, Position, Signal } from '../domain/types.ts';
+import type { Candle, Position, Signal } from "../domain/types.ts";
 
 export type Params = Readonly<Record<string, number>>;
 
