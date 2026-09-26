@@ -570,7 +570,7 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
 
   // Castes: a coordinator that plans and reviews can run on a stronger model
   // than the workers doing narrow, well-scoped items.
-  const workerModelResult = parseTerminalAgentModel(body, "workerModel");
+  const workerModelResult = parseTerminalAgentModel(body, "workerModel", { allowAuto: true });
   const coordinatorModelResult = parseTerminalAgentModel(body, "coordinatorModel");
   const modelError = workerModelResult.error ?? coordinatorModelResult.error;
   if (modelError) {

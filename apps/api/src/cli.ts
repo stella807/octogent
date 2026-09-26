@@ -899,7 +899,8 @@ const main = async () => {
   octogent channel list <id>           List channel messages
   octogent swarm start <tentacleId>    Start a swarm over the tentacle's open todo items
     --workspace-mode, -w               shared | worktree (default worktree)
-    --worker-model / --coordinator-model  Agent model per caste, e.g. haiku / opus
+    --worker-model                     auto | haiku | sonnet | opus (auto: haiku for simple items)
+    --coordinator-model                Model for the coordinator, e.g. opus
     --budget                           Token budget shared by the whole swarm, per attempt
     --max-attempts                     1-3; retries stop and relaunch unfinished items
     --resume                           Skip items the saved progress shows done; carry notes

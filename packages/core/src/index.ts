@@ -1,6 +1,7 @@
 export * from "./application/buildTerminalList";
 export * from "./adapters/InMemoryTerminalSnapshotReader";
 export * from "./domain/terminal";
+export * from "./domain/swarm";
 export * from "./domain/deck";
 export * from "./domain/agentRuntime";
 export * from "./domain/channel";
@@ -13,3 +14,4 @@ export * from "./domain/uiState";
 export * from "./domain/usage";
 export * from "./ports/TerminalSnapshotReader";
 export * from "./util/typeCoercion";
+export * from "./application/swarmModelRouting";

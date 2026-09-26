@@ -17,6 +17,7 @@
 @import "./styles/console-canvas-deck.css";
 @import "./styles/console-canvas-pixpack.css";
 @import "./styles/console-canvas-canvas.css";
+@import "./styles/console-canvas-swarm-dialog.css";
 @import "./styles/console-canvas-code-intel.css";
 @import "./styles/console-canvas-prompts.css";
 @import "./styles/console-overrides-telemetry.css";

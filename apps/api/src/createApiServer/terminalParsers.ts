@@ -1,4 +1,4 @@
-import { isTerminalAgentModel } from "@octogent/core";
+import { SWARM_AUTO_MODEL, isTerminalAgentModel } from "@octogent/core";
 
 import {
   type TentacleWorkspaceMode,
@@ -173,13 +173,24 @@ export const parseTerminalNameOrigin = (payload: unknown) => {
  * sanitizing: the value ends up in a shell command, and a silently rewritten
  * model name would run a different model than the caller asked for.
  */
-export const parseTerminalAgentModel = (payload: unknown, key = "model") => {
+export const parseTerminalAgentModel = (
+  payload: unknown,
+  key = "model",
+  { allowAuto = false }: { allowAuto?: boolean } = {},
+) => {
   const raw =
     payload !== null && typeof payload === "object"
       ? (payload as Record<string, unknown>)[key]
       : undefined;
   if (raw === undefined) {
     return { model: undefined as string | undefined, error: null as string | null };
+  }
+  // "auto" is a swarm routing setting, not a model the CLI understands.
+  if (raw === SWARM_AUTO_MODEL && !allowAuto) {
+    return {
+      model: undefined as string | undefined,
+      error: `${key} cannot be "${SWARM_AUTO_MODEL}"; that only applies to a swarm's workerModel.`,
+    };
   }
   if (!isTerminalAgentModel(raw)) {
     return {

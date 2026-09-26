@@ -17,6 +17,7 @@ import { useTerminalMutations } from "./app/hooks/useTerminalMutations";
 import { useTerminalStateReconciliation } from "./app/hooks/useTerminalStateReconciliation";
 import { useUsageHeatmapPolling } from "./app/hooks/useUsageHeatmapPolling";
 import { useWorkspaceSetup } from "./app/hooks/useWorkspaceSetup";
+import { readSwarmLaunchError } from "./app/swarmLaunch";
 import {
   createTerminalRuntimeStateStore,
   getTerminalRuntimeStateInfo,
@@ -564,16 +565,21 @@ export const App = () => {
                 if (!response.ok) return;
                 await refreshColumns();
               },
-              onSpawnSwarm: async (tentacleId, workspaceMode) => {
-                const response = await fetch(
-                  `/api/deck/tentacles/${encodeURIComponent(tentacleId)}/swarm`,
-                  {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ workspaceMode }),
-                  },
-                );
-                if (!response.ok) return;
+              onSpawnSwarm: async (tentacleId, request) => {
+                try {
+                  const response = await fetch(
+                    `/api/deck/tentacles/${encodeURIComponent(tentacleId)}/swarm`,
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(request),
+                    },
+                  );
+                  if (response.ok) return { ok: true };
+                  return { ok: false, error: await readSwarmLaunchError(response) };
+                } catch {
+                  return { ok: false, error: "Could not reach Octogent to start the swarm." };
+                }
               },
               onOctobossAction: async (action) => {
                 const response = await fetch("/api/terminals", {

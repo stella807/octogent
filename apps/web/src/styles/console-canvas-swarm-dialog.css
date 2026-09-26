@@ -1,0 +1,188 @@
+/* ── Spawn swarm dialog (canvas overlay, matches the delete dialogs' chrome) ── */
+
+.canvas-swarm-dialog {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  z-index: 60;
+  width: 380px;
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 32px);
+  display: flex;
+}
+
+.swarm-dialog {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--accent-primary);
+  background: #000000;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary) 30%, #000000), 0 0 16px
+    color-mix(in srgb, var(--accent-primary) 12%, transparent);
+}
+
+.swarm-dialog-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.42rem 0.56rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-primary) 50%, #1a1a1a);
+}
+
+.swarm-dialog-header h2 {
+  margin: 0;
+  color: var(--accent-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+}
+
+.swarm-dialog-tentacle {
+  color: var(--text-secondary);
+  font-size: 0.66rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.swarm-dialog-body {
+  display: grid;
+  /* minmax(0, …) stops long nowrap preview rows widening the column past the dialog. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.55rem;
+  padding: 0.62rem 0.56rem 0.5rem;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.swarm-dialog-field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.swarm-dialog-field > span {
+  color: color-mix(in srgb, var(--accent-primary) 70%, #999999);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.58rem;
+  font-weight: 600;
+}
+
+.swarm-dialog-field select,
+.swarm-dialog-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 34%, #1a1a1a);
+  background: #050505;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.7rem;
+  padding: 0.28rem 0.36rem;
+}
+
+.swarm-dialog-field select:focus-visible,
+.swarm-dialog-field input:focus-visible {
+  outline: 1px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+.swarm-dialog-check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-primary);
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+
+.swarm-dialog-check input {
+  accent-color: var(--accent-primary);
+}
+
+.swarm-dialog-preview ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 9.5rem;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 20%, #1a1a1a);
+  background: #050505;
+}
+
+.swarm-dialog-preview li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  padding: 0.24rem 0.42rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-primary) 12%, #111111);
+  font-size: 0.66rem;
+}
+
+.swarm-dialog-preview li:last-child {
+  border-bottom: 0;
+}
+
+.swarm-dialog-model {
+  flex: 0 0 3.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.56rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+/* Colour tracks cost so the cheap rows stand out at a glance. */
+.swarm-dialog-model--haiku {
+  color: var(--term-green);
+}
+
+.swarm-dialog-model--sonnet {
+  color: var(--accent-primary);
+}
+
+.swarm-dialog-model--opus {
+  color: #ff6b6b;
+}
+
+.swarm-dialog-item {
+  min-width: 0;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.swarm-dialog-budget {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.45rem;
+  padding-left: 1.2rem;
+}
+
+.swarm-dialog-hint {
+  margin: 0.3rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.6rem;
+  line-height: 1.4;
+}
+
+.swarm-dialog-error {
+  margin: 0;
+  border: 1px solid color-mix(in srgb, #ff4444 40%, #333333);
+  background: color-mix(in srgb, #ff4444 8%, #0a0000);
+  color: #ff6b6b;
+  padding: 0.32rem 0.42rem;
+  font-size: 0.64rem;
+  line-height: 1.35;
+}
+
+.swarm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  padding: 0.45rem 0.56rem 0.56rem;
+  border-top: 1px solid color-mix(in srgb, var(--accent-primary) 24%, #1a1a1a);
+}

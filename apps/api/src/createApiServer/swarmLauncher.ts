@@ -1,6 +1,13 @@
 import { join } from "node:path";
 
-import type { TentacleWorkspaceMode, TerminalAgentProvider } from "@octogent/core";
+import {
+  SWARM_AUTO_MODEL,
+  SWARM_AUTO_TIER_MODELS,
+  type SwarmModelTier,
+  type TentacleWorkspaceMode,
+  type TerminalAgentProvider,
+  classifyTodoComplexity,
+} from "@octogent/core";
 
 import { readDeckTentacles } from "../deck/readDeckTentacles";
 import type { SwarmQueueItem } from "../deck/swarmQueue";
@@ -21,6 +28,7 @@ export type SwarmLaunchOptions = {
   items: Array<{ index: number; text: string }>;
   workerWorkspaceMode: TentacleWorkspaceMode;
   agentProvider?: TerminalAgentProvider | undefined;
+  /** A model for every worker, or SWARM_AUTO_MODEL to route each item by complexity. */
   workerModel?: string | undefined;
   coordinatorModel?: string | undefined;
   /** 1 for a fresh swarm; budget retries use 2+ and get distinct terminal ids. */
@@ -34,7 +42,7 @@ export type SwarmLaunchOptions = {
 export type SwarmLaunchResult = {
   tentacleId: string;
   parentTerminalId: string | null;
-  workers: Array<{ terminalId: string; todoIndex: number; todoText: string }>;
+  workers: Array<{ terminalId: string; todoIndex: number; todoText: string; model?: string }>;
   queuedItems: SwarmQueueItem[];
   /** Every terminal this swarm will run, including workers the coordinator spawns later. */
   terminalIds: string[];
@@ -93,9 +101,13 @@ export const launchSwarm = async (
 
   // Todo order is priority order: the first items get a worker each, and the
   // overflow waits in the swarm queue for whichever worker finishes first.
-  const queuedItems = items
-    .slice(MAX_CHILDREN_PER_PARENT)
-    .map((item) => ({ todoIndex: item.index, todoText: item.text }));
+  const isAutoRouted = workerModel === SWARM_AUTO_MODEL;
+  const tierOf = (text: string): SwarmModelTier | undefined =>
+    isAutoRouted ? classifyTodoComplexity(text).tier : undefined;
+  const queuedItems: SwarmQueueItem[] = items.slice(MAX_CHILDREN_PER_PARENT).map((item) => {
+    const tier = tierOf(item.text);
+    return { todoIndex: item.index, todoText: item.text, ...(tier ? { tier } : {}) };
+  });
   const targetItems = items.slice(0, MAX_CHILDREN_PER_PARENT);
 
   // Determine base ref: use tentacle's worktree branch if it exists, otherwise HEAD.
@@ -114,11 +126,33 @@ export const launchSwarm = async (
   const needsParent = targetItems.length > 1;
   const parentTerminalId = needsParent ? `${idPrefix}-parent` : null;
   const tentacleContextPath = join(workspaceCwd, ".octogent/tentacles", tentacleId);
-  const workers = targetItems.map((item) => ({
-    terminalId: `${idPrefix}-${item.index}`,
-    todoIndex: item.index,
-    todoText: item.text,
-  }));
+  const workerTiers: Record<string, SwarmModelTier> = {};
+  const workers: SwarmLaunchResult["workers"] = targetItems.map((item) => {
+    const terminalId = `${idPrefix}-${item.index}`;
+    const tier = tierOf(item.text);
+    if (tier) workerTiers[terminalId] = tier;
+    const model = tier ? SWARM_AUTO_TIER_MODELS[tier] : workerModel;
+    return {
+      terminalId,
+      todoIndex: item.index,
+      todoText: item.text,
+      ...(model ? { model } : {}),
+    };
+  });
+  // Cheap-model workers never claim standard items, so if any are queued and
+  // no worker runs the standard model, promote the last worker: better one
+  // simple item on the stronger model than standard items nobody may take.
+  const lastWorker = workers[workers.length - 1];
+  if (
+    isAutoRouted &&
+    lastWorker &&
+    queuedItems.some((item) => item.tier === "standard") &&
+    !Object.values(workerTiers).includes("standard")
+  ) {
+    lastWorker.model = SWARM_AUTO_TIER_MODELS.standard;
+    workerTiers[lastWorker.terminalId] = "standard";
+  }
+  const modelOf = (terminalId: string) => workers.find((w) => w.terminalId === terminalId)?.model;
 
   const buildWorkerContextIntro = (): string =>
     workerWorkspaceMode === "worktree"
@@ -277,7 +311,7 @@ export const launchSwarm = async (
       autoRenamePromptContext: item.text,
       workspaceMode: workerWorkspaceMode,
       ...(agentProvider ? { agentProvider: agentProvider } : {}),
-      ...(workerModel ? { model: workerModel } : {}),
+      ...(worker.model ? { model: worker.model } : {}),
       ...(workerPrompt ? { initialPrompt: workerPrompt } : {}),
       ...(workerWorkspaceMode === "worktree" ? { baseRef } : {}),
     });
@@ -285,7 +319,10 @@ export const launchSwarm = async (
 
   if (needsParent && parentTerminalId) {
     const workerListing = workers
-      .map((w) => `- \`${w.terminalId}\` — item #${w.todoIndex}: ${w.todoText}`)
+      .map(
+        (w) =>
+          `- \`${w.terminalId}\` — item #${w.todoIndex}: ${w.todoText}${w.model ? ` (model: ${w.model})` : ""}`,
+      )
       .join("\n");
 
     const workerSpawnCommands = targetItems
@@ -352,7 +389,9 @@ export const launchSwarm = async (
           `--auto-rename-prompt-context ${shellSingleQuote(item.text)}`,
           "--prompt-template swarm-worker",
           `--prompt-variables ${shellSingleQuote(promptVariables)}`,
-          ...(workerModel ? [`--model ${shellSingleQuote(workerModel)}`] : []),
+          ...(modelOf(workerTerminalId)
+            ? [`--model ${shellSingleQuote(modelOf(workerTerminalId) as string)}`]
+            : []),
         ];
         if (workerWorkspaceMode === "worktree") {
           commandParts.splice(3, 0, `--worktree-id ${shellSingleQuote(workerTerminalId)}`);
@@ -396,6 +435,7 @@ export const launchSwarm = async (
       tentacleId,
       workers.map((w) => w.terminalId),
       queuedItems,
+      workerTiers,
     );
   }
 

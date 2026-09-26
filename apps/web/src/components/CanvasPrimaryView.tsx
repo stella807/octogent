@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { WorkspaceSetupSnapshot, WorkspaceSetupStepId } from "@octogent/core";
+import type {
+  SwarmLaunchRequest,
+  WorkspaceSetupSnapshot,
+  WorkspaceSetupStepId,
+} from "@octogent/core";
 import {
   Check as CheckIcon,
   ChevronDown,
@@ -34,6 +38,7 @@ import { CanvasTerminalColumn } from "./canvas/CanvasTerminalColumn";
 import { DeleteAllTerminalsDialog } from "./canvas/DeleteAllTerminalsDialog";
 import { OctopusNode } from "./canvas/OctopusNode";
 import { SessionNode } from "./canvas/SessionNode";
+import { SpawnSwarmDialog, type SpawnSwarmResult } from "./canvas/SpawnSwarmDialog";
 import { WorkspaceSetupCard } from "./deck/WorkspaceSetupCard";
 
 type ContextMenuState =
@@ -72,7 +77,7 @@ type CanvasPrimaryViewProps = {
   onCreateTerminal?: () => Promise<string | undefined> | undefined;
   onCreateWorktreeTerminal?: () => Promise<string | undefined> | undefined;
   onCreateTentacle?: () => void;
-  onSpawnSwarm?: (tentacleId: string, workspaceMode: TerminalWorkspaceMode) => Promise<void>;
+  onSpawnSwarm?: (tentacleId: string, request: SwarmLaunchRequest) => Promise<SpawnSwarmResult>;
   onSolveTodoItem?: (tentacleId: string, itemIndex: number) => Promise<void> | void;
   onOctobossAction?: (action: string) => Promise<string | undefined> | undefined;
   onTentacleAction?: (
@@ -232,6 +237,10 @@ export const CanvasPrimaryView = ({
   const runtimeStateStore = providedRuntimeStateStore ?? runtimeStateStoreRef.current;
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [isDeleteAllDialogOpen, setIsDeleteAllDialogOpen] = useState(false);
+  const [pendingSwarm, setPendingSwarm] = useState<{
+    tentacleId: string;
+    workspaceMode: TerminalWorkspaceMode;
+  } | null>(null);
   const [openTerminals, setOpenTerminals] = useState<Map<string, GraphNode>>(new Map());
   const [openTentacles, setOpenTentacles] = useState<Map<string, GraphNode>>(new Map());
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
@@ -753,10 +762,21 @@ export const CanvasPrimaryView = ({
     [onCreateAgent],
   );
 
+  // Spawn buttons open the settings dialog; nothing starts until it is confirmed.
   const handleSpawnSwarm = useCallback(
     (tentacleId: string, workspaceMode: TerminalWorkspaceMode) => {
       setContextMenu(null);
-      void onSpawnSwarm?.(tentacleId, workspaceMode);
+      setPendingSwarm({ tentacleId, workspaceMode });
+    },
+    [],
+  );
+
+  const handleLaunchSwarm = useCallback(
+    async (tentacleId: string, request: SwarmLaunchRequest): Promise<SpawnSwarmResult> => {
+      if (!onSpawnSwarm) return { ok: false, error: "Swarms cannot be started from this view." };
+      const result = await onSpawnSwarm(tentacleId, request);
+      if (result.ok) setPendingSwarm(null);
+      return result;
     },
     [onSpawnSwarm],
   );
@@ -1525,6 +1545,21 @@ export const CanvasPrimaryView = ({
             isDeletingTerminalId={isDeletingTerminalId ?? null}
             onCancel={onCancelDelete}
             onConfirmDelete={onConfirmDelete}
+          />
+        </div>
+      )}
+
+      {pendingSwarm && (
+        <div className="canvas-swarm-dialog">
+          <SpawnSwarmDialog
+            key={`${pendingSwarm.tentacleId}:${pendingSwarm.workspaceMode}`}
+            tentacleName={
+              tentacleById.get(pendingSwarm.tentacleId)?.displayName ?? pendingSwarm.tentacleId
+            }
+            initialWorkspaceMode={pendingSwarm.workspaceMode}
+            todoItems={tentacleById.get(pendingSwarm.tentacleId)?.todoItems ?? null}
+            onCancel={() => setPendingSwarm(null)}
+            onLaunch={(request) => handleLaunchSwarm(pendingSwarm.tentacleId, request)}
           />
         </div>
       )}

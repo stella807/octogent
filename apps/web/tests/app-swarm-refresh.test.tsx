@@ -182,16 +182,37 @@ vi.mock("../src/components/PrimaryViewRouter", () => ({
     canvasPrimaryViewProps,
   }: {
     canvasPrimaryViewProps: {
-      onSpawnSwarm?: (tentacleId: string, workspaceMode: "shared" | "worktree") => Promise<void>;
+      onSpawnSwarm?: (
+        tentacleId: string,
+        request: Record<string, unknown>,
+      ) => Promise<{ ok: boolean; error?: string }>;
       onSolveTodoItem?: ((tentacleId: string, itemIndex: number) => Promise<void>) | undefined;
     };
   }) => (
     <div>
       <button
         type="button"
-        onClick={() => void canvasPrimaryViewProps.onSpawnSwarm?.("docs-knowledge", "shared")}
+        onClick={() =>
+          void canvasPrimaryViewProps.onSpawnSwarm?.("docs-knowledge", {
+            workspaceMode: "shared",
+          })
+        }
       >
         Spawn Swarm
+      </button>
+      <button
+        type="button"
+        onClick={async () => {
+          const result = await canvasPrimaryViewProps.onSpawnSwarm?.("docs-knowledge", {
+            workspaceMode: "shared",
+            workerModel: "auto",
+            budgetTokens: 2_000_000,
+            maxAttempts: 2,
+          });
+          spawnResults.push(result);
+        }}
+      >
+        Spawn Budgeted Swarm
       </button>
       <span>
         {canvasPrimaryViewProps.onSolveTodoItem
@@ -215,6 +236,8 @@ vi.mock("../src/components/TelemetryTape", () => ({
 }));
 
 import { App } from "../src/App";
+
+const spawnResults: unknown[] = [];
 
 describe("App swarm actions", () => {
   afterEach(() => {
@@ -264,5 +287,42 @@ describe("App swarm actions", () => {
     });
 
     expect(terminalSnapshotReads).toBe(0);
+  });
+
+  it("sends the dialog's models and budget to the API and reports the server's error", async () => {
+    vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
+    spawnResults.length = 0;
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/deck/tentacles/docs-knowledge/swarm") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({ error: "A swarm is already active for this tentacle." }),
+          {
+            status: 409,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+      return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Spawn Budgeted Swarm" }));
+
+    await waitFor(() => {
+      expect(spawnResults).toEqual([
+        { ok: false, error: "A swarm is already active for this tentacle." },
+      ]);
+    });
+    const swarmCall = fetchMock.mock.calls.find(([calledUrl]) =>
+      String(calledUrl).endsWith("/api/deck/tentacles/docs-knowledge/swarm"),
+    );
+    expect(JSON.parse(String(swarmCall?.[1]?.body))).toEqual({
+      workspaceMode: "shared",
+      workerModel: "auto",
+      budgetTokens: 2_000_000,
+      maxAttempts: 2,
+    });
   });
 });

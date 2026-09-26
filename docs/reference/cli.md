@@ -102,7 +102,7 @@ octogent channel list <terminal-id>
 
 ```bash
 octogent swarm start <tentacle-id> [--workspace-mode shared|worktree]
-  [--worker-model haiku] [--coordinator-model opus]
+  [--worker-model auto|haiku|sonnet|opus] [--coordinator-model opus]
   [--budget 2000000] [--max-attempts 2] [--resume]
 octogent swarm budget <tentacle-id>
 ```

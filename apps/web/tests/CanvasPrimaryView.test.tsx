@@ -396,4 +396,31 @@ describe("CanvasPrimaryView", () => {
       expect(onTentacleAction).toHaveBeenCalledWith("tentacle-a", "tentacle-reorganize-todos");
     });
   });
+
+  it("opens the spawn swarm dialog from the context menu and launches with its settings", async () => {
+    const onSpawnSwarm = vi.fn().mockResolvedValue({ ok: true });
+
+    const { container } = render(
+      <CanvasPrimaryView columns={[]} isUiStateHydrated onSpawnSwarm={onSpawnSwarm} />,
+    );
+    const tentacleNode = container.querySelector('[data-node-id="t:tentacle-a"]');
+    fireEvent.contextMenu(tentacleNode as Element, { clientX: 160, clientY: 120 });
+    fireEvent.click(await screen.findByRole("button", { name: "Spawn Swarm (Normal)" }));
+
+    // Nothing starts until the operator confirms the settings.
+    expect(onSpawnSwarm).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("region", { name: "Spawn swarm" });
+    expect(dialog).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Spawn swarm" }));
+    await waitFor(() => {
+      expect(onSpawnSwarm).toHaveBeenCalledWith("tentacle-a", {
+        workspaceMode: "shared",
+        workerModel: "auto",
+      });
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "Spawn swarm" })).toBeNull();
+    });
+  });
 });

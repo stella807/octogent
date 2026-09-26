@@ -55,4 +55,23 @@ describe("swarm queue", () => {
     expect(store.claim("docs", "docs-swarm-0")).toEqual({ ok: false, error: "not-a-worker" });
     expect(store.claim("docs", "docs-swarm-5")).toMatchObject({ item: { todoIndex: 7 } });
   });
+
+  it("keeps a cheap-model worker off queued items that need the standard model", () => {
+    const store = createSwarmQueueStore();
+    store.open(
+      "docs",
+      ["docs-swarm-0", "docs-swarm-1"],
+      [
+        { todoIndex: 5, todoText: "Refactor runtime", tier: "standard" },
+        { todoIndex: 6, todoText: "Fix typo", tier: "simple" },
+      ],
+      { "docs-swarm-0": "simple", "docs-swarm-1": "standard" },
+    );
+
+    // The simple worker skips the standard head of the queue.
+    expect(store.claim("docs", "docs-swarm-0")).toMatchObject({ item: { todoIndex: 6 } });
+    // Nothing simple is left for it, even though a standard item still waits.
+    expect(store.claim("docs", "docs-swarm-0")).toEqual({ ok: true, item: null, remaining: 1 });
+    expect(store.claim("docs", "docs-swarm-1")).toMatchObject({ item: { todoIndex: 5 } });
+  });
 });

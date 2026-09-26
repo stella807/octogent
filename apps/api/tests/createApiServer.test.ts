@@ -3467,6 +3467,76 @@ describe("createApiServer", () => {
     expect(snapshots).toHaveLength(0);
   });
 
+  const writeTodo = (workspaceCwd: string, items: string[]) => {
+    const tentacleDir = join(workspaceCwd, ".octogent", "tentacles", "docs-knowledge");
+    mkdirSync(tentacleDir, { recursive: true });
+    writeFileSync(join(tentacleDir, "CONTEXT.md"), "# Docs & Knowledge\n", "utf8");
+    writeFileSync(
+      join(tentacleDir, "todo.md"),
+      `# Todo\n\n${items.map((item) => `- [ ] ${item}`).join("\n")}\n`,
+      "utf8",
+    );
+  };
+
+  it("routes auto workers: simple items to the cheap model, the rest to the standard one", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    writeTodo(workspaceCwd, ["Fix typo in README", "Refactor the session runtime"]);
+
+    const baseUrl = await startServer({ workspaceCwd, promptsDir: repoPromptsDir });
+    const swarm = await postJson(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`, {
+      workspaceMode: "shared",
+      workerModel: "auto",
+    });
+    expect(swarm.status).toBe(201);
+    await expect(swarm.json()).resolves.toMatchObject({
+      workers: [
+        { terminalId: "docs-knowledge-swarm-0", model: "haiku" },
+        { terminalId: "docs-knowledge-swarm-1", model: "sonnet" },
+      ],
+    });
+
+    const prompt = await readParentPrompt(workspaceCwd, "docs-knowledge-swarm-parent");
+    expect(prompt).toContain("--model 'haiku'");
+    expect(prompt).toContain("--model 'sonnet'");
+    expect(prompt).not.toContain("--model 'auto'");
+  });
+
+  it("keeps a standard-model worker in the pool while standard items wait in the queue", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    const simpleItems = Array.from(
+      { length: MAX_CHILDREN_PER_PARENT },
+      (_, index) => `Fix typo in file ${index}`,
+    );
+    writeTodo(workspaceCwd, [...simpleItems, "Refactor the session runtime"]);
+
+    const baseUrl = await startServer({ workspaceCwd, promptsDir: repoPromptsDir });
+    const swarm = await postJson(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`, {
+      workspaceMode: "shared",
+      workerModel: "auto",
+    });
+    const body = (await swarm.json()) as { workers: Array<{ terminalId: string; model: string }> };
+    const models = body.workers.map((w) => w.model);
+    expect(models.filter((m) => m === "sonnet")).toHaveLength(1);
+    const standardWorker = body.workers.find((w) => w.model === "sonnet")?.terminalId ?? "";
+    const cheapWorker = body.workers.find((w) => w.model === "haiku")?.terminalId ?? "";
+
+    const claimUrl = `${baseUrl}/api/deck/tentacles/docs-knowledge/swarm/claim`;
+    const fromCheap = await postJson(claimUrl, { terminalId: cheapWorker });
+    await expect(fromCheap.json()).resolves.toEqual({ item: null, remaining: 1 });
+    const fromStandard = await postJson(claimUrl, { terminalId: standardWorker });
+    await expect(fromStandard.json()).resolves.toMatchObject({
+      item: { todoText: "Refactor the session runtime" },
+    });
+  });
+
+  it("only accepts auto as a swarm worker setting, never as a terminal's model", async () => {
+    const baseUrl = await startServer();
+    const terminal = await postJson(`${baseUrl}/api/terminals`, { model: "auto" });
+    expect(terminal.status).toBe(400);
+  });
+
   it("rejects model names that could smuggle shell syntax into the agent command", async () => {
     const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
     temporaryDirectories.push(workspaceCwd);

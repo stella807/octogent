@@ -1,13 +1,17 @@
+import {
+  SWARM_BUDGET_MAX_TOKENS,
+  SWARM_BUDGET_MIN_TOKENS,
+  SWARM_MAX_ATTEMPTS,
+} from "@octogent/core";
+
 export type SwarmBudgetRequest = {
   budgetTokens: number;
   maxAttempts: number;
 };
 
-// Below this a coordinator cannot even read its own prompt; above the upper
-// cap a typo (an extra zero or three) would make the budget meaningless.
-const MIN_BUDGET_TOKENS = 1_000;
-const MAX_BUDGET_TOKENS = 1_000_000_000;
-const MAX_ATTEMPTS = 3;
+const MIN_BUDGET_TOKENS = SWARM_BUDGET_MIN_TOKENS;
+const MAX_BUDGET_TOKENS = SWARM_BUDGET_MAX_TOKENS;
+const MAX_ATTEMPTS = SWARM_MAX_ATTEMPTS;
 
 /**
  * Reads `budgetTokens` and `maxAttempts` from a swarm request. Retries are
