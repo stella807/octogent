@@ -1,13 +1,13 @@
-import { readFile } from 'node:fs/promises';
-import type { Candle } from '../domain/types.ts';
+import { readFile } from "node:fs/promises";
+import type { Candle } from "../domain/types.ts";
 
-const COLUMNS = ['timestamp', 'open', 'high', 'low', 'close', 'volume'] as const;
+const COLUMNS = ["timestamp", "open", "high", "low", "close", "volume"] as const;
 
 /** Epoch values below this are seconds; above it, milliseconds (year 5138 in seconds). */
 const SECONDS_CUTOFF = 1e11;
 
 export async function loadCsv(path: string): Promise<Candle[]> {
-  return parseCsv(await readFile(path, 'utf8'));
+  return parseCsv(await readFile(path, "utf8"));
 }
 
 /**
@@ -26,9 +26,9 @@ export function parseCsv(text: string): Candle[] {
 
   lines.forEach((raw, index) => {
     const line = raw.trim();
-    if (line === '' || line.startsWith('#')) return;
+    if (line === "" || line.startsWith("#")) return;
     const lineNo = index + 1;
-    const fields = line.split(',').map((f) => f.trim());
+    const fields = line.split(",").map((f) => f.trim());
 
     if (!seenData && isHeader(fields)) {
       seenData = true;
@@ -37,15 +37,20 @@ export function parseCsv(text: string): Candle[] {
     seenData = true;
 
     if (fields.length < COLUMNS.length) {
-      throw new Error(`line ${lineNo}: expected ${COLUMNS.length} columns (${COLUMNS.join(',')}), got ${fields.length}`);
+      throw new Error(
+        `line ${lineNo}: expected ${COLUMNS.length} columns (${COLUMNS.join(",")}), got ${fields.length}`,
+      );
     }
 
-    const time = parseTimestamp(fields[0] ?? '', lineNo);
+    const time = parseTimestamp(fields[0] ?? "", lineNo);
     const [open, high, low, close, volume] = COLUMNS.slice(1).map((name, i) =>
-      parseNumber(fields[i + 1] ?? '', name, lineNo)) as [number, number, number, number, number];
+      parseNumber(fields[i + 1] ?? "", name, lineNo),
+    ) as [number, number, number, number, number];
 
     if (high < Math.max(open, close, low) || low > Math.min(open, close) || low <= 0) {
-      throw new Error(`line ${lineNo}: inconsistent OHLC (open ${open}, high ${high}, low ${low}, close ${close})`);
+      throw new Error(
+        `line ${lineNo}: inconsistent OHLC (open ${open}, high ${high}, low ${low}, close ${close})`,
+      );
     }
     if (volume < 0) throw new Error(`line ${lineNo}: volume must not be negative, got ${volume}`);
 
@@ -67,7 +72,7 @@ export function parseCsv(text: string): Candle[] {
  * the price columns instead would swallow a lone malformed data row silently.
  */
 function isHeader(fields: readonly string[]): boolean {
-  const first = fields[0] ?? '';
+  const first = fields[0] ?? "";
   return !/^\d/.test(first) && !Number.isFinite(Date.parse(first));
 }
 
@@ -78,13 +83,16 @@ function parseTimestamp(value: string, lineNo: number): number {
   }
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) {
-    throw new Error(`line ${lineNo}: timestamp "${value}" is not epoch seconds, epoch ms, or ISO 8601`);
+    throw new Error(
+      `line ${lineNo}: timestamp "${value}" is not epoch seconds, epoch ms, or ISO 8601`,
+    );
   }
   return parsed;
 }
 
 function parseNumber(value: string, name: string, lineNo: number): number {
-  const n = value === '' ? Number.NaN : Number(value);
-  if (!Number.isFinite(n)) throw new Error(`line ${lineNo}: ${name} "${value}" is not a finite number`);
+  const n = value === "" ? Number.NaN : Number(value);
+  if (!Number.isFinite(n))
+    throw new Error(`line ${lineNo}: ${name} "${value}" is not a finite number`);
   return n;
 }

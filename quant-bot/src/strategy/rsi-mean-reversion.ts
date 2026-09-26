@@ -1,7 +1,7 @@
-import type { Candle, Position, Signal } from '../domain/types.ts';
-import { FLAT } from '../domain/types.ts';
-import { atr, closes, rsi, sma } from '../indicators/index.ts';
-import { param, type Params, type Strategy, type StrategyFactory } from './types.ts';
+import type { Candle, Position, Signal } from "../domain/types.ts";
+import { FLAT } from "../domain/types.ts";
+import { atr, closes, rsi, sma } from "../indicators/index.ts";
+import { type Params, type Strategy, type StrategyFactory, param } from "./types.ts";
 
 /**
  * Buy oversold dips, but only while price is above its long trend filter.
@@ -13,7 +13,7 @@ import { param, type Params, type Strategy, type StrategyFactory } from './types
  * prints max drawdown next to win rate so the tradeoff stays visible.
  */
 export const rsiMeanReversion: StrategyFactory = {
-  name: 'rsi-mean-reversion',
+  name: "rsi-mean-reversion",
   defaults: { rsiPeriod: 14, entryLevel: 30, exitLevel: 55, trendPeriod: 200, atrStopMult: 3 },
   grid: {
     entryLevel: [20, 25, 30],
@@ -22,11 +22,11 @@ export const rsiMeanReversion: StrategyFactory = {
     atrStopMult: [2, 3],
   },
   create(candles: readonly Candle[], params: Params): Strategy {
-    const rsiPeriod = param(params, 'rsiPeriod', 14);
-    const entryLevel = param(params, 'entryLevel', 30);
-    const exitLevel = param(params, 'exitLevel', 55);
-    const trendPeriod = param(params, 'trendPeriod', 200);
-    const stopMult = param(params, 'atrStopMult', 3);
+    const rsiPeriod = param(params, "rsiPeriod", 14);
+    const entryLevel = param(params, "entryLevel", 30);
+    const exitLevel = param(params, "exitLevel", 55);
+    const trendPeriod = param(params, "trendPeriod", 200);
+    const stopMult = param(params, "atrStopMult", 3);
     if (entryLevel >= exitLevel) {
       throw new RangeError(`rsi needs entryLevel < exitLevel, got ${entryLevel} >= ${exitLevel}`);
     }
@@ -37,7 +37,7 @@ export const rsiMeanReversion: StrategyFactory = {
     const atrLine = atr(candles, 14);
 
     return {
-      name: 'rsi-mean-reversion',
+      name: "rsi-mean-reversion",
       params: { rsiPeriod, entryLevel, exitLevel, trendPeriod, atrStopMult: stopMult },
       warmup: trendPeriod + rsiPeriod,
       signalAt(i: number, position: Position | null): Signal {
@@ -48,7 +48,7 @@ export const rsiMeanReversion: StrategyFactory = {
         const atrValue = atrLine[i] ?? 0;
 
         if (position === null) {
-          if (close < trend) return { target: 0, reason: 'below trend filter' };
+          if (close < trend) return { target: 0, reason: "below trend filter" };
           if (r > entryLevel) return { target: 0, reason: `RSI ${r.toFixed(1)} not oversold` };
           return {
             target: 1,
@@ -58,7 +58,7 @@ export const rsiMeanReversion: StrategyFactory = {
         }
 
         if (r >= exitLevel) return { target: 0, reason: `RSI ${r.toFixed(1)} reverted` };
-        return { target: 1, stopPrice: position.stopPrice, reason: 'waiting for reversion' };
+        return { target: 1, stopPrice: position.stopPrice, reason: "waiting for reversion" };
       },
     };
   },

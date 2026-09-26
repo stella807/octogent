@@ -1,5 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 
 export interface RunnerState {
   /** Open time of the last bar the runner acted on, so a restart cannot re-trade it. */
@@ -41,7 +41,7 @@ export class StateStore {
 
   async load(): Promise<RunnerState> {
     try {
-      const parsed: unknown = JSON.parse(await readFile(this.#path, 'utf8'));
+      const parsed: unknown = JSON.parse(await readFile(this.#path, "utf8"));
       return { ...EMPTY_STATE, ...(parsed as Partial<RunnerState>) };
     } catch {
       return { ...EMPTY_STATE };
@@ -52,7 +52,7 @@ export class StateStore {
   async save(state: RunnerState): Promise<void> {
     await mkdir(dirname(this.#path), { recursive: true });
     const tmp = `${this.#path}.tmp`;
-    await writeFile(tmp, JSON.stringify(state, null, 2), 'utf8');
+    await writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
     await rename(tmp, this.#path);
   }
 }

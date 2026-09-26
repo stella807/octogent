@@ -1,7 +1,19 @@
-import type { Candle, EquityPoint, ExitReason, Position, Timeframe, Trade } from '../domain/types.ts';
-import { RiskManager, type HaltKind, type RiskLimits, DEFAULT_LIMITS } from '../risk/risk-manager.ts';
-import type { Strategy } from '../strategy/types.ts';
-import { buyFillPrice, DEFAULT_COSTS, feeOn, sellFillPrice, type CostModel } from './costs.ts';
+import type {
+  Candle,
+  EquityPoint,
+  ExitReason,
+  Position,
+  Timeframe,
+  Trade,
+} from "../domain/types.ts";
+import {
+  DEFAULT_LIMITS,
+  type HaltKind,
+  type RiskLimits,
+  RiskManager,
+} from "../risk/risk-manager.ts";
+import type { Strategy } from "../strategy/types.ts";
+import { type CostModel, DEFAULT_COSTS, buyFillPrice, feeOn, sellFillPrice } from "./costs.ts";
 
 export interface BacktestConfig {
   readonly startingEquity: number;
@@ -14,7 +26,7 @@ export const DEFAULT_CONFIG: BacktestConfig = {
   startingEquity: 10_000,
   costs: DEFAULT_COSTS,
   limits: DEFAULT_LIMITS,
-  timeframe: '1d',
+  timeframe: "1d",
 };
 
 export interface HaltRecord {
@@ -115,7 +127,7 @@ export function runBacktest(
     // End-of-data liquidation is an accounting close, not an order, so it is
     // exempt. Everything else the exchange would refuse is refused here too,
     // which is how a position too small to sell shows up as the dust it is.
-    if (reason !== 'end-of-data' && notional < costs.minOrderNotional) {
+    if (reason !== "end-of-data" && notional < costs.minOrderNotional) {
       rejectedOrders += 1;
       return;
     }
@@ -200,7 +212,7 @@ export function runBacktest(
     if (pending) {
       const held = position?.qty ?? 0;
       if (pending.target <= 0) {
-        if (held > 0) reduce(held, sellFillPrice(bar.open, costs), bar.time, i, 'signal');
+        if (held > 0) reduce(held, sellFillPrice(bar.open, costs), bar.time, i, "signal");
         lastTarget = 0;
       } else {
         const buyPrice = buyFillPrice(bar.open, costs);
@@ -212,7 +224,7 @@ export function runBacktest(
         if (delta > 0) {
           add(delta, buyPrice, bar.time, i);
         } else if (delta < 0 && held > 0) {
-          reduce(-delta, sellFillPrice(bar.open, costs), bar.time, i, 'signal');
+          reduce(-delta, sellFillPrice(bar.open, costs), bar.time, i, "signal");
         }
         if (position !== null) lastTarget = target;
         // `add`/`reduce` reassign `position`, so re-read it after those calls.
@@ -227,7 +239,7 @@ export function runBacktest(
     // 2. Resting stop, checked against this bar's low.
     if (position !== null && position.stopPrice !== undefined && bar.low <= position.stopPrice) {
       const touched = bar.open <= position.stopPrice ? bar.open : position.stopPrice;
-      reduce(position.qty, sellFillPrice(touched, costs), bar.time, i, 'stop');
+      reduce(position.qty, sellFillPrice(touched, costs), bar.time, i, "stop");
     }
 
     if (position !== null && bar.close > position.highWaterPrice) {
@@ -246,7 +258,7 @@ export function runBacktest(
     const state = risk.onBar(bar.time, equity);
     if (state.flatten) {
       if (position !== null) {
-        reduce(position.qty, sellFillPrice(bar.close, costs), bar.time, i, 'risk-halt');
+        reduce(position.qty, sellFillPrice(bar.close, costs), bar.time, i, "risk-halt");
       }
       if (firstHalt === null) {
         firstHalt = { kind: state.halt, reason: state.reason, time: bar.time };
@@ -260,13 +272,13 @@ export function runBacktest(
       const signal = strategy.signalAt(i, position);
       const wantsExit = signal.target <= 0 && position !== null;
       const wantsEntry = signal.target > 0 && position === null;
-      const wantsResize = position !== null
-        && Math.abs(signal.target - lastTarget) >= REBALANCE_THRESHOLD;
+      const wantsResize =
+        position !== null && Math.abs(signal.target - lastTarget) >= REBALANCE_THRESHOLD;
       if (wantsExit || wantsEntry || wantsResize) {
         pending = {
           target: signal.target,
           stopPrice: signal.stopPrice,
-          reason: signal.reason ?? '',
+          reason: signal.reason ?? "",
         };
       }
       // Stops ratchet up only, and take effect immediately rather than waiting
@@ -280,7 +292,13 @@ export function runBacktest(
 
   if (position !== null && candles.length > 0) {
     const last = candles[candles.length - 1] as Candle;
-    reduce(position.qty, sellFillPrice(last.close, costs), last.time, candles.length - 1, 'end-of-data');
+    reduce(
+      position.qty,
+      sellFillPrice(last.close, costs),
+      last.time,
+      candles.length - 1,
+      "end-of-data",
+    );
   }
 
   return {

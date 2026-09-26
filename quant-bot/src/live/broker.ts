@@ -1,4 +1,4 @@
-import type { Candle, Timeframe } from '../domain/types.ts';
+import type { Candle, Timeframe } from "../domain/types.ts";
 
 export interface Balance {
   /** Quote currency available to spend, e.g. USDT. */
@@ -8,7 +8,7 @@ export interface Balance {
 }
 
 export interface Fill {
-  readonly side: 'buy' | 'sell';
+  readonly side: "buy" | "sell";
   readonly qty: number;
   readonly price: number;
   readonly fee: number;

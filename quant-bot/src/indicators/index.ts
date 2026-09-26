@@ -1,4 +1,4 @@
-import type { Candle } from '../domain/types.ts';
+import type { Candle } from "../domain/types.ts";
 
 /**
  * Every indicator here returns an array the same length as its input, where
@@ -86,11 +86,7 @@ export function atr(candles: readonly Candle[], period = 14): Series {
   for (let i = 1; i < candles.length; i += 1) {
     const c = candles[i] as Candle;
     const prevClose = (candles[i - 1] as Candle).close;
-    tr[i] = Math.max(
-      c.high - c.low,
-      Math.abs(c.high - prevClose),
-      Math.abs(c.low - prevClose),
-    );
+    tr[i] = Math.max(c.high - c.low, Math.abs(c.high - prevClose), Math.abs(c.low - prevClose));
   }
   let acc = 0;
   for (let i = 1; i <= period; i += 1) acc += tr[i] as number;

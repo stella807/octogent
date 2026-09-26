@@ -1,9 +1,9 @@
-import type { Candle, Position, Timeframe } from '../domain/types.ts';
-import { TIMEFRAME_MS } from '../domain/types.ts';
-import { RiskManager, type RiskLimits } from '../risk/risk-manager.ts';
-import type { StrategyFactory, Params } from '../strategy/types.ts';
-import type { Broker } from './broker.ts';
-import { StateStore, type RunnerState } from './state-store.ts';
+import type { Candle, Position, Timeframe } from "../domain/types.ts";
+import { TIMEFRAME_MS } from "../domain/types.ts";
+import { type RiskLimits, RiskManager } from "../risk/risk-manager.ts";
+import type { Params, StrategyFactory } from "../strategy/types.ts";
+import type { Broker } from "./broker.ts";
+import { type RunnerState, StateStore } from "./state-store.ts";
 
 export interface RunnerOptions {
   readonly broker: Broker;
@@ -17,14 +17,14 @@ export interface RunnerOptions {
 }
 
 export type Action =
-  | 'bought'
-  | 'sold'
-  | 'stopped-out'
-  | 'flattened-by-risk'
-  | 'hold'
-  | 'already-processed'
-  | 'halted'
-  | 'warming-up';
+  | "bought"
+  | "sold"
+  | "stopped-out"
+  | "flattened-by-risk"
+  | "hold"
+  | "already-processed"
+  | "halted"
+  | "warming-up";
 
 export interface StepOutcome {
   readonly action: Action;
@@ -61,30 +61,46 @@ export class LiveRunner {
 
   async step(): Promise<StepOutcome> {
     const { broker, symbol, timeframe, factory, params, log } = this.#options;
-    const state = this.#state ?? (this.#state = await this.#store.load());
+    this.#state ??= await this.#store.load();
+    const state = this.#state;
 
     const warmup = factory.create([], params).warmup;
     const raw = await broker.candles(symbol, timeframe, warmup + 50);
     const candles = dropFormingBar(raw, timeframe);
     const bar = candles[candles.length - 1];
     if (!bar) {
-      return outcome('warming-up', 0, 0, 0, 'no closed bars available yet');
+      return outcome("warming-up", 0, 0, 0, "no closed bars available yet");
     }
     if (candles.length <= warmup) {
-      return outcome('warming-up', bar.time, bar.close, 0,
-        `need ${warmup + 1} closed bars, have ${candles.length}`);
+      return outcome(
+        "warming-up",
+        bar.time,
+        bar.close,
+        0,
+        `need ${warmup + 1} closed bars, have ${candles.length}`,
+      );
     }
 
     const balance = await broker.balance(symbol);
     const equity = balance.cash + balance.qty * bar.close;
 
     if (state.killed) {
-      return outcome('halted', bar.time, bar.close, equity,
-        `kill switch active: ${state.killReason ?? 'unknown'}. Clear ${this.#options.statePath} to resume.`);
+      return outcome(
+        "halted",
+        bar.time,
+        bar.close,
+        equity,
+        `kill switch active: ${state.killReason ?? "unknown"}. Clear ${this.#options.statePath} to resume.`,
+      );
     }
     if (bar.time <= state.lastBarTime) {
-      return outcome('already-processed', bar.time, bar.close, equity,
-        'this bar was already acted on');
+      return outcome(
+        "already-processed",
+        bar.time,
+        bar.close,
+        equity,
+        "this bar was already acted on",
+      );
     }
 
     const risk = this.#risk.onBar(bar.time, equity);
@@ -98,7 +114,7 @@ export class LiveRunner {
       state.lastBarTime = bar.time;
       this.#clearPosition(state);
       await this.#store.save(state);
-      return outcome('flattened-by-risk', bar.time, bar.close, equity, risk.reason);
+      return outcome("flattened-by-risk", bar.time, bar.close, equity, risk.reason);
     }
 
     const position = toPosition(state, balance.qty);
@@ -114,11 +130,11 @@ export class LiveRunner {
       this.#clearPosition(state);
       state.lastBarTime = bar.time;
       await this.#store.save(state);
-      return outcome('stopped-out', bar.time, bar.close, equity, `stop ${state.stopPrice}`);
+      return outcome("stopped-out", bar.time, bar.close, equity, `stop ${state.stopPrice}`);
     }
 
-    let action: Action = 'hold';
-    let detail = signal.reason ?? 'no change';
+    let action: Action = "hold";
+    let detail = signal.reason ?? "no change";
 
     if (signal.target > 0 && balance.qty <= 0) {
       const price = await broker.lastPrice(symbol);
@@ -131,15 +147,15 @@ export class LiveRunner {
         state.entryTime = fill.time;
         state.stopPrice = signal.stopPrice ?? null;
         state.highWaterPrice = fill.price;
-        action = 'bought';
+        action = "bought";
       } else {
-        detail = 'position size rounded to zero; cash too small for the risk limit';
+        detail = "position size rounded to zero; cash too small for the risk limit";
       }
     } else if (signal.target <= 0 && balance.qty > 0) {
       const fill = await broker.marketSell(symbol, balance.qty);
       log(`SELL ${fill.qty.toFixed(8)} ${symbol} at ${fill.price} — ${detail}`);
       this.#clearPosition(state);
-      action = 'sold';
+      action = "sold";
     } else if (balance.qty > 0 && signal.stopPrice !== undefined) {
       const next = Math.max(state.stopPrice ?? signal.stopPrice, signal.stopPrice);
       if (next !== state.stopPrice) detail = `stop raised to ${next.toFixed(2)}`;
@@ -157,14 +173,15 @@ export class LiveRunner {
   async run(signal?: AbortSignal): Promise<void> {
     const pollMs = Math.max(TIMEFRAME_MS[this.#options.timeframe] / 10, 15_000);
     this.#options.log(
-      `runner started: ${this.#options.symbol} ${this.#options.timeframe} on ${this.#options.broker.id}` +
-      (this.#options.broker.isLive ? '  *** LIVE FUNDS ***' : '  (paper — no real money)'),
+      `runner started: ${this.#options.symbol} ${this.#options.timeframe} on ${this.#options.broker.id}${this.#options.broker.isLive ? "  *** LIVE FUNDS ***" : "  (paper — no real money)"}`,
     );
     while (!signal?.aborted) {
       try {
         const result = await this.step();
-        if (result.action !== 'already-processed' && result.action !== 'hold') {
-          this.#options.log(`[${new Date(result.barTime).toISOString()}] ${result.action}: ${result.detail}`);
+        if (result.action !== "already-processed" && result.action !== "hold") {
+          this.#options.log(
+            `[${new Date(result.barTime).toISOString()}] ${result.action}: ${result.detail}`,
+          );
         }
       } catch (error) {
         // A transient exchange error must not kill the process and leave a
@@ -201,21 +218,35 @@ function toPosition(state: RunnerState, qty: number): Position | null {
 }
 
 /** Drops the bar still being built, which no strategy may see. */
-export function dropFormingBar(candles: readonly Candle[], timeframe: Timeframe, now = Date.now()): Candle[] {
+export function dropFormingBar(
+  candles: readonly Candle[],
+  timeframe: Timeframe,
+  now = Date.now(),
+): Candle[] {
   const barMs = TIMEFRAME_MS[timeframe];
   return candles.filter((c) => c.time + barMs <= now);
 }
 
-function outcome(action: Action, barTime: number, price: number, equity: number, detail: string): StepOutcome {
+function outcome(
+  action: Action,
+  barTime: number,
+  price: number,
+  equity: number,
+  detail: string,
+): StepOutcome {
   return { action, barTime, price, equity, detail };
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => {
-      clearTimeout(timer);
-      resolve();
-    }, { once: true });
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
   });
 }

@@ -76,5 +76,5 @@ export function minimumViableEquity(
   if (costs.minOrderNotional <= 0) return 0;
   const byRisk = stopDistancePct > 0 ? riskPerTradePct / stopDistancePct : 1;
   const fraction = Math.min(maxPositionPct / 100, byRisk);
-  return fraction > 0 ? costs.minOrderNotional / fraction : Infinity;
+  return fraction > 0 ? costs.minOrderNotional / fraction : Number.POSITIVE_INFINITY;
 }

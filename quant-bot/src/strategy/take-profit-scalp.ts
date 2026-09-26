@@ -1,5 +1,5 @@
-import type { Candle, Position, Signal } from '../domain/types.ts';
-import { param, type Params, type Strategy, type StrategyFactory } from './types.ts';
+import type { Candle, Position, Signal } from "../domain/types.ts";
+import { type Params, type Strategy, type StrategyFactory, param } from "./types.ts";
 
 /**
  * The high-win-rate trap, made runnable.
@@ -17,15 +17,15 @@ import { param, type Params, type Strategy, type StrategyFactory } from './types
  * is the core of the reel-bot pitch.
  */
 export const takeProfitScalp: StrategyFactory = {
-  name: 'take-profit-scalp',
+  name: "take-profit-scalp",
   defaults: { takeProfitPct: 0.5, stopPct: 50 },
   grid: {
     takeProfitPct: [0.25, 0.5, 1],
     stopPct: [25, 50, 75],
   },
   create(candles: readonly Candle[], params: Params): Strategy {
-    const takeProfitPct = param(params, 'takeProfitPct', 0.5);
-    const stopPct = param(params, 'stopPct', 50);
+    const takeProfitPct = param(params, "takeProfitPct", 0.5);
+    const stopPct = param(params, "stopPct", 50);
     if (takeProfitPct <= 0 || stopPct < 0 || stopPct >= 100) {
       throw new RangeError(
         `take-profit-scalp needs takeProfitPct > 0 and 0 <= stopPct < 100, got ${takeProfitPct}/${stopPct}`,
@@ -37,7 +37,7 @@ export const takeProfitScalp: StrategyFactory = {
     const useStop = stopPct > 0;
 
     return {
-      name: 'take-profit-scalp',
+      name: "take-profit-scalp",
       params: { takeProfitPct, stopPct },
       warmup: 1,
       signalAt(i: number, position: Position | null): Signal {
@@ -46,7 +46,7 @@ export const takeProfitScalp: StrategyFactory = {
           return {
             target: 1,
             ...(useStop ? { stopPrice: close * (1 - stopPct / 100) } : {}),
-            reason: 'always in; this strategy never waits for a setup',
+            reason: "always in; this strategy never waits for a setup",
           };
         }
         const target = position.entryPrice * (1 + takeProfitPct / 100);
@@ -55,7 +55,7 @@ export const takeProfitScalp: StrategyFactory = {
         }
         // The stop stays fixed rather than trailing: trailing it would cut the
         // losers short, which is exactly the thing this shape refuses to do.
-        return { target: 1, stopPrice: position.stopPrice, reason: 'waiting for the tiny target' };
+        return { target: 1, stopPrice: position.stopPrice, reason: "waiting for the tiny target" };
       },
     };
   },

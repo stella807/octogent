@@ -1,7 +1,7 @@
-import type { Candle, Position, Signal } from '../domain/types.ts';
-import { FLAT } from '../domain/types.ts';
-import { barsPerYear, closes, logReturns, sma, stdev } from '../indicators/index.ts';
-import { param, type Params, type Strategy, type StrategyFactory } from './types.ts';
+import type { Candle, Position, Signal } from "../domain/types.ts";
+import { FLAT } from "../domain/types.ts";
+import { barsPerYear, closes, logReturns, sma, stdev } from "../indicators/index.ts";
+import { type Params, type Strategy, type StrategyFactory, param } from "./types.ts";
 
 /**
  * Volatility targeting: hold less when the market is wild, more when it is calm,
@@ -20,7 +20,7 @@ import { param, type Params, type Strategy, type StrategyFactory } from './types
  * double-count the same risk and shrink the position to nothing.
  */
 export const volTarget: StrategyFactory = {
-  name: 'vol-target',
+  name: "vol-target",
   defaults: { targetVolPct: 20, volPeriod: 30, trendPeriod: 100, maxExposure: 1 },
   grid: {
     targetVolPct: [10, 20, 30],
@@ -28,10 +28,10 @@ export const volTarget: StrategyFactory = {
     trendPeriod: [50, 100, 200],
   },
   create(candles: readonly Candle[], params: Params): Strategy {
-    const targetVolPct = param(params, 'targetVolPct', 20);
-    const volPeriod = param(params, 'volPeriod', 30);
-    const trendPeriod = param(params, 'trendPeriod', 100);
-    const maxExposure = param(params, 'maxExposure', 1);
+    const targetVolPct = param(params, "targetVolPct", 20);
+    const volPeriod = param(params, "volPeriod", 30);
+    const trendPeriod = param(params, "trendPeriod", 100);
+    const maxExposure = param(params, "maxExposure", 1);
     if (targetVolPct <= 0) {
       throw new RangeError(`vol-target needs targetVolPct > 0, got ${targetVolPct}`);
     }
@@ -48,7 +48,7 @@ export const volTarget: StrategyFactory = {
     const targetVol = targetVolPct / 100;
 
     return {
-      name: 'vol-target',
+      name: "vol-target",
       params: { targetVolPct, volPeriod, trendPeriod, maxExposure },
       warmup: Math.max(volPeriod, trendPeriod) + 1,
       signalAt(i: number, _position: Position | null): Signal {
@@ -59,14 +59,14 @@ export const volTarget: StrategyFactory = {
         }
         const close = (candles[i] as Candle).close;
         if (close < trend) {
-          return { target: 0, reason: 'below trend filter' };
+          return { target: 0, reason: "below trend filter" };
         }
 
         const realisedVol = barVol * annualiser;
         if (realisedVol <= 0) {
           // Zero measured volatility is a data artefact (a flat or stale
           // window), not a risk-free asset. Sizing off it would divide by ~0.
-          return { target: 0, reason: 'no measurable volatility; refusing to size' };
+          return { target: 0, reason: "no measurable volatility; refusing to size" };
         }
         const raw = targetVol / realisedVol;
         const target = Math.min(raw, maxExposure);

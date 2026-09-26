@@ -1,4 +1,4 @@
-import type { Candle } from '../domain/types.ts';
+import type { Candle } from "../domain/types.ts";
 
 export interface AlignedSeries {
   readonly symbols: readonly string[];
@@ -18,7 +18,7 @@ export interface AlignedSeries {
 export function alignCandles(input: ReadonlyMap<string, readonly Candle[]>): AlignedSeries {
   const symbols = [...input.keys()];
   if (symbols.length === 0) {
-    throw new RangeError('alignCandles needs at least one symbol');
+    throw new RangeError("alignCandles needs at least one symbol");
   }
 
   const byTime = new Map<string, Map<number, Candle>>();
@@ -37,7 +37,7 @@ export function alignCandles(input: ReadonlyMap<string, readonly Candle[]>): Ali
 
   if (times.length === 0) {
     throw new RangeError(
-      `symbols ${symbols.join(', ')} share no common timestamps; check the exchange and timeframe`,
+      `symbols ${symbols.join(", ")} share no common timestamps; check the exchange and timeframe`,
     );
   }
 

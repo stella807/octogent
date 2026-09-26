@@ -1,5 +1,5 @@
-import { mulberry32 } from '../backtest/monte-carlo.ts';
-import { TIMEFRAME_MS, type Candle, type Timeframe } from '../domain/types.ts';
+import { mulberry32 } from "../backtest/monte-carlo.ts";
+import { type Candle, TIMEFRAME_MS, type Timeframe } from "../domain/types.ts";
 
 export interface SyntheticOptions {
   readonly bars: number;
@@ -53,9 +53,9 @@ const DEFAULT_START = Date.UTC(2018, 0, 1);
  * jump over that a real 24/7 market would not have.
  */
 export function generateCandles(options: SyntheticOptions): Candle[] {
-  const timeframe = options.timeframe ?? '1d';
+  const timeframe = options.timeframe ?? "1d";
   const barMs = TIMEFRAME_MS[timeframe];
-  const days = barMs / TIMEFRAME_MS['1d'];
+  const days = barMs / TIMEFRAME_MS["1d"];
   const random = mulberry32(options.seed ?? 42);
   const normal = (): number => {
     // Box-Muller; 1 - u keeps log() away from zero.

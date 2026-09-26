@@ -1,6 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { TIMEFRAME_MS, type Candle, type Timeframe } from '../domain/types.ts';
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { type Candle, TIMEFRAME_MS, type Timeframe } from "../domain/types.ts";
 
 export interface FetchOptions {
   readonly exchange: string;
@@ -84,7 +84,7 @@ async function paginate(
 
 function toCandle(row: readonly (number | undefined)[]): Candle | null {
   const [time, open, high, low, close, volume] = row;
-  if ([time, open, high, low, close].some((v) => typeof v !== 'number' || !Number.isFinite(v))) {
+  if ([time, open, high, low, close].some((v) => typeof v !== "number" || !Number.isFinite(v))) {
     return null;
   }
   return {
@@ -98,13 +98,13 @@ function toCandle(row: readonly (number | undefined)[]): Candle | null {
 }
 
 function cacheName(options: FetchOptions): string {
-  const safe = (s: string) => s.replace(/[^A-Za-z0-9_-]+/g, '-');
+  const safe = (s: string) => s.replace(/[^A-Za-z0-9_-]+/g, "-");
   return `${safe(options.exchange)}_${safe(options.symbol)}_${options.timeframe}.json`;
 }
 
 async function readCache(path: string): Promise<Candle[]> {
   try {
-    const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
+    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
     return Array.isArray(parsed) ? (parsed as Candle[]).sort((a, b) => a.time - b.time) : [];
   } catch {
     // A missing or corrupt cache just means fetching again.
@@ -113,7 +113,7 @@ async function readCache(path: string): Promise<Candle[]> {
 }
 
 async function writeCache(path: string, candles: readonly Candle[]): Promise<void> {
-  await mkdir(join(path, '..'), { recursive: true });
+  await mkdir(join(path, ".."), { recursive: true });
   // Write-then-rename so an interrupted run never leaves a truncated cache.
   const tmp = `${path}.tmp`;
   await writeFile(tmp, JSON.stringify(candles));
@@ -132,12 +132,15 @@ interface CcxtClient {
 async function connect(exchange: string): Promise<CcxtClient> {
   let ccxt: Record<string, unknown>;
   try {
-    ccxt = (await import('ccxt')) as unknown as Record<string, unknown>;
+    ccxt = (await import("ccxt")) as unknown as Record<string, unknown>;
   } catch {
-    throw new Error('fetching exchange data needs the optional ccxt dependency; run `pnpm install` or use --synthetic / --csv');
+    throw new Error(
+      "fetching exchange data needs the optional ccxt dependency; run `pnpm install` or use --synthetic / --csv",
+    );
   }
   const ExchangeClass = ccxt[exchange];
-  if (typeof ExchangeClass !== 'function') throw new Error(`ccxt has no exchange named "${exchange}"`);
+  if (typeof ExchangeClass !== "function")
+    throw new Error(`ccxt has no exchange named "${exchange}"`);
   // Public market data only: no credentials are ever passed here.
   return new (ExchangeClass as new (cfg: unknown) => CcxtClient)({ enableRateLimit: true });
 }

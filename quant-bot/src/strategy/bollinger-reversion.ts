@@ -1,7 +1,7 @@
-import type { Candle, Position, Signal } from '../domain/types.ts';
-import { FLAT } from '../domain/types.ts';
-import { atr, closes, sma, stdev } from '../indicators/index.ts';
-import { param, type Params, type Strategy, type StrategyFactory } from './types.ts';
+import type { Candle, Position, Signal } from "../domain/types.ts";
+import { FLAT } from "../domain/types.ts";
+import { atr, closes, sma, stdev } from "../indicators/index.ts";
+import { type Params, type Strategy, type StrategyFactory, param } from "./types.ts";
 
 /**
  * Z-score mean reversion against a rolling mean and standard deviation (the
@@ -22,7 +22,7 @@ import { param, type Params, type Strategy, type StrategyFactory } from './types
  * actually the start of a real decline rather than a dip.
  */
 export const bollingerReversion: StrategyFactory = {
-  name: 'bollinger-reversion',
+  name: "bollinger-reversion",
   defaults: { period: 20, entryZ: 2.5, exitZ: 0.5, trendPeriod: 200, atrStopMult: 3 },
   grid: {
     period: [14, 20, 30],
@@ -30,11 +30,11 @@ export const bollingerReversion: StrategyFactory = {
     trendPeriod: [100, 200],
   },
   create(candles: readonly Candle[], params: Params): Strategy {
-    const period = param(params, 'period', 20);
-    const entryZ = param(params, 'entryZ', 2.5);
-    const exitZ = param(params, 'exitZ', 0.5);
-    const trendPeriod = param(params, 'trendPeriod', 200);
-    const stopMult = param(params, 'atrStopMult', 3);
+    const period = param(params, "period", 20);
+    const entryZ = param(params, "entryZ", 2.5);
+    const exitZ = param(params, "exitZ", 0.5);
+    const trendPeriod = param(params, "trendPeriod", 200);
+    const stopMult = param(params, "atrStopMult", 3);
     if (entryZ <= exitZ) {
       throw new RangeError(`bollinger-reversion needs entryZ > exitZ, got ${entryZ} <= ${exitZ}`);
     }
@@ -46,15 +46,22 @@ export const bollingerReversion: StrategyFactory = {
     const atrLine = atr(candles, 14);
 
     return {
-      name: 'bollinger-reversion',
+      name: "bollinger-reversion",
       params: { period, entryZ, exitZ, trendPeriod, atrStopMult: stopMult },
       warmup: Math.max(period, trendPeriod) + 1,
       signalAt(i: number, position: Position | null): Signal {
         const m = mean[i];
         const s = sd[i];
         const trend = trendLine[i];
-        if (m === null || m === undefined || s === null || s === undefined
-          || trend === null || trend === undefined || s <= 0) {
+        if (
+          m === null ||
+          m === undefined ||
+          s === null ||
+          s === undefined ||
+          trend === null ||
+          trend === undefined ||
+          s <= 0
+        ) {
           return FLAT;
         }
         const close = (candles[i] as Candle).close;
@@ -62,7 +69,7 @@ export const bollingerReversion: StrategyFactory = {
         const atrValue = atrLine[i] ?? 0;
 
         if (position === null) {
-          if (close < trend) return { target: 0, reason: 'below trend filter' };
+          if (close < trend) return { target: 0, reason: "below trend filter" };
           if (z > -entryZ) return { target: 0, reason: `z=${z.toFixed(2)} not oversold` };
           return {
             target: 1,
@@ -72,7 +79,7 @@ export const bollingerReversion: StrategyFactory = {
         }
 
         if (z >= -exitZ) return { target: 0, reason: `z=${z.toFixed(2)} reverted toward mean` };
-        return { target: 1, stopPrice: position.stopPrice, reason: 'waiting for reversion' };
+        return { target: 1, stopPrice: position.stopPrice, reason: "waiting for reversion" };
       },
     };
   },

@@ -1,5 +1,5 @@
-import type { Params } from '../strategy/types.ts';
-import type { AlignedSeries } from './align.ts';
+import type { Params } from "../strategy/types.ts";
+import type { AlignedSeries } from "./align.ts";
 
 /**
  * A portfolio strategy answers a different question from a single-asset one:

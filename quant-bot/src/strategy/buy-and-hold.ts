@@ -1,5 +1,5 @@
-import type { Candle } from '../domain/types.ts';
-import type { Strategy, StrategyFactory } from './types.ts';
+import type { Candle } from "../domain/types.ts";
+import type { Strategy, StrategyFactory } from "./types.ts";
 
 /**
  * The benchmark every other strategy has to beat, and the reason this file
@@ -9,15 +9,15 @@ import type { Strategy, StrategyFactory } from './types.ts';
  * the honest answer is to buy and hold.
  */
 export const buyAndHold: StrategyFactory = {
-  name: 'buy-and-hold',
+  name: "buy-and-hold",
   defaults: {},
   grid: {},
   create(_candles: readonly Candle[]): Strategy {
     return {
-      name: 'buy-and-hold',
+      name: "buy-and-hold",
       params: {},
       warmup: 0,
-      signalAt: () => ({ target: 1, reason: 'benchmark: always long' }),
+      signalAt: () => ({ target: 1, reason: "benchmark: always long" }),
     };
   },
 };
