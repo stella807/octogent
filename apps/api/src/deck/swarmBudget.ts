@@ -4,6 +4,8 @@ export type SwarmBudgetAttempt = {
   tokensByTerminal: Record<string, number>;
   spentTokens: number;
   status: "running" | "exceeded";
+  /** Set once the early warning has been sent for this attempt. */
+  warned: boolean;
   startedAt: string;
   exceededAt?: string;
 };
@@ -29,10 +31,15 @@ type SwarmBudget = Omit<SwarmBudgetSnapshot, "totalSpentTokens">;
  * the enforcer's job, reached through `onExceeded`, which fires once per
  * attempt the moment its total reaches the budget.
  */
+/** Share of the budget at which agents are told to checkpoint and wind down. */
+export const SWARM_BUDGET_WARNING_RATIO = 0.8;
+
 export const createSwarmBudgetStore = ({
   onExceeded,
+  onWarning,
 }: {
   onExceeded: (tentacleId: string, attempt: number) => void;
+  onWarning?: (tentacleId: string, attempt: number) => void;
 }) => {
   const budgets = new Map<string, SwarmBudget>();
   const tentacleByTerminal = new Map<string, string>();
@@ -68,6 +75,7 @@ export const createSwarmBudgetStore = ({
         tokensByTerminal: {},
         spentTokens: 0,
         status: "running",
+        warned: false,
         startedAt: new Date().toISOString(),
       });
       budget.outcome = "running";
@@ -89,11 +97,17 @@ export const createSwarmBudgetStore = ({
       attempt.tokensByTerminal[terminalId] = totalTokens;
       attempt.spentTokens = Object.values(attempt.tokensByTerminal).reduce((a, b) => a + b, 0);
 
+      const isLive = attempt.status === "running" && attempt === currentAttempt(budget);
       if (
-        attempt.status === "running" &&
-        attempt === currentAttempt(budget) &&
-        attempt.spentTokens >= budget.budgetTokens
+        isLive &&
+        !attempt.warned &&
+        attempt.spentTokens >= budget.budgetTokens * SWARM_BUDGET_WARNING_RATIO &&
+        attempt.spentTokens < budget.budgetTokens
       ) {
+        attempt.warned = true;
+        onWarning?.(tentacleId, attempt.attempt);
+      }
+      if (isLive && attempt.spentTokens >= budget.budgetTokens) {
         attempt.status = "exceeded";
         attempt.exceededAt = new Date().toISOString();
         onExceeded(tentacleId, attempt.attempt);

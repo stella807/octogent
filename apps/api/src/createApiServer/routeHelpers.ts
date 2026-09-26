@@ -5,6 +5,7 @@ import type { ClaudeUsageSnapshot } from "../claudeUsage";
 import type { CodeIntelStore } from "../codeIntelStore";
 import type { CodexUsageSnapshot } from "../codexUsage";
 import type { SwarmBudgetStore } from "../deck/swarmBudget";
+import type { SwarmProgressStore } from "../deck/swarmProgress";
 import type { SwarmQueueStore } from "../deck/swarmQueue";
 import type { GitHubRepoSummarySnapshot } from "../githubRepoSummary";
 import type { MonitorService } from "../monitor";
@@ -34,6 +35,7 @@ export type RouteHandlerDependencies = {
   swarmQueues: SwarmQueueStore;
   swarmBudgets: SwarmBudgetStore;
   swarmBudgetEnforcer: SwarmBudgetEnforcer;
+  swarmProgress: SwarmProgressStore;
 };
 
 export type RouteHandlerContext = {

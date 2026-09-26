@@ -73,6 +73,8 @@ Octogent reads each agent's Claude Code transcript on every tool call and turn e
 2. if attempts remain and some items were not reported DONE, a fresh attempt starts on only those items, with a new coordinator, new workers (terminal IDs like `<tentacle-id>-swarm-a2-<index>`), and a fresh budget of the same size. The new coordinator is told what the last attempt spent, which items it finished, and which of its worker branches to merge.
 3. otherwise the swarm stops for good.
 
+At 80% of the budget, Octogent first sends every agent in the attempt a `BUDGET WARNING` channel message: workers finish their current step, commit it in worktree mode, and send a `PROGRESS:` note to the coordinator, so a stop that follows loses as little as possible.
+
 Every stop is recorded in `.octogent/tentacles/<tentacle-id>/swarm-budget.md` with the spend per agent, what finished, what did not, and what to change. `octogent swarm budget <tentacle-id>` shows the same numbers.
 
 Things to know before relying on it:
@@ -82,7 +84,25 @@ Things to know before relying on it:
 - **Enforcement lags by one tool call.** Usage is checked when an agent calls a tool or ends a turn, so the final total can overshoot by that last step.
 - **Claude Code only.** Codex terminals send no hooks, so swarms using Codex cannot take a budget.
 - **Subagents may be undercounted.** Octogent reads the transcript file each hook names. Claude Code versions that write subagent usage to separate files will have that usage missed, so keep a margin in the budget if workers use subagents.
-- **Budgets live in memory**, like channels and the swarm queue, and do not survive an API restart.
+- **Budgets live in memory**, like channels and the swarm queue, and do not survive an API restart. Progress does: see below.
+
+## Remembered progress
+
+Octogent keeps a progress ledger for every swarm, budgeted or not, built from signals agents already send, so it costs no tokens:
+
+- queue claims record which worker holds which item
+- `DONE: <item>` messages to the coordinator mark the item done
+- `PROGRESS: <note>` messages to the coordinator are filed under the sender's current item
+
+The ledger is written to `swarms/<tentacle-id>.json` in the project state directory (see [Filesystem Layout](../reference/filesystem-layout.md)) (atomically, so a crash cannot truncate it) and rendered as `.octogent/tentacles/<tentacle-id>/swarm-progress.md`. It is what budget retries use: a retry skips items reported done, and each retry worker is handed the notes its item's previous worker left, so it continues instead of starting over. A worker that claims a queued item gets that item's notes too.
+
+Because it is on disk, it also survives an API restart, which ends every agent session. To pick up where a swarm left off, remove its old terminals and start it again with `--resume`:
+
+```bash
+octogent swarm start <tentacle-id> --resume
+```
+
+Resume skips open todo items whose text matches an item the ledger shows done, and carries the notes for the rest. "Done" means a worker reported it; it has not necessarily been reviewed or merged, so check `swarm-progress.md` before resuming. Starting a swarm without `--resume` begins a fresh ledger.
 
 ## Worker limits and identity
 

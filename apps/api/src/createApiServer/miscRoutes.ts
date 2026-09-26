@@ -270,7 +270,7 @@ const CHANNEL_MESSAGES_PATH_PATTERN = /^\/api\/channels\/([^/]+)\/messages$/;
 
 export const handleChannelMessagesRoute: ApiRouteHandler = async (
   { request, response, requestUrl, corsOrigin },
-  { runtime },
+  { runtime, swarmProgress },
 ) => {
   const match = requestUrl.pathname.match(CHANNEL_MESSAGES_PATH_PATTERN);
   if (!match) {
@@ -310,6 +310,9 @@ export const handleChannelMessagesRoute: ApiRouteHandler = async (
     writeJson(response, 404, { error: "Target terminal not found." }, corsOrigin);
     return true;
   }
+  // Workers' DONE/PROGRESS reports to their coordinator double as the swarm's
+  // durable progress record.
+  swarmProgress.recordMessage(terminalId, fromTerminalId, content);
 
   writeJson(response, 201, message, corsOrigin);
   return true;

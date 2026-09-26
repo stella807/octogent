@@ -636,6 +636,7 @@ const swarmClaim = async () => {
     const data = (await response.json()) as {
       item?: { todoIndex: number; todoText: string } | null;
       remaining?: number;
+      notes?: string[];
       error?: unknown;
     };
     if (!response.ok) {
@@ -649,6 +650,10 @@ const swarmClaim = async () => {
     }
     console.log(`CLAIMED #${data.item.todoIndex}: ${data.item.todoText}`);
     console.log(`(${data.remaining ?? 0} item(s) still queued)`);
+    if (data.notes && data.notes.length > 0) {
+      console.log("A previous worker left progress on this item. Continue from it:");
+      for (const note of data.notes) console.log(`  - ${note}`);
+    }
   } catch {
     apiError();
   }
@@ -683,6 +688,7 @@ const swarmStart = async () => {
   if (coordinatorModel) body.coordinatorModel = coordinatorModel;
   if (budgetTokens !== undefined) body.budgetTokens = budgetTokens;
   if (maxAttempts !== undefined) body.maxAttempts = maxAttempts;
+  if (args.includes("--resume")) body.resume = true;
 
   const apiBase = resolveRuntimeApiBase();
   try {
@@ -896,6 +902,7 @@ const main = async () => {
     --worker-model / --coordinator-model  Agent model per caste, e.g. haiku / opus
     --budget                           Token budget shared by the whole swarm, per attempt
     --max-attempts                     1-3; retries stop and relaunch unfinished items
+    --resume                           Skip items the saved progress shows done; carry notes
   octogent swarm budget <tentacleId>   Show a swarm's token spend and budget outcome
   octogent swarm claim <tentacleId>    Claim the next queued swarm item (--from <workerId>)
   octogent swarm queue <tentacleId>    Show queued and claimed swarm items`);

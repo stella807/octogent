@@ -3272,6 +3272,175 @@ describe("createApiServer", () => {
     expect(exhausted).toMatchObject({ totalSpentTokens: 2700 });
   });
 
+  // `expected` lets a caller wait out an older persisted entry with the same id.
+  const readParentPrompt = async (
+    workspaceCwd: string,
+    parentTerminalId: string,
+    expected = "",
+  ) => {
+    const registry = await waitForRegistryDocument<{
+      terminals: Array<{ terminalId: string; initialPrompt?: string }>;
+    }>(workspaceCwd, (document) =>
+      document.terminals.some(
+        (t) => t.terminalId === parentTerminalId && (t.initialPrompt ?? "").includes(expected),
+      ),
+    );
+    return registry.terminals.find((t) => t.terminalId === parentTerminalId)?.initialPrompt ?? "";
+  };
+
+  it("remembers swarm progress on disk from DONE and PROGRESS messages", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    writeSwarmTentacle(workspaceCwd, 3);
+
+    const baseUrl = await startServer({ workspaceCwd, promptsDir: repoPromptsDir });
+    await postJson(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`, {
+      workspaceMode: "shared",
+    });
+    await postJson(`${baseUrl}/api/channels/docs-knowledge-swarm-parent/messages`, {
+      fromTerminalId: "docs-knowledge-swarm-0",
+      content: "DONE: item 0",
+    });
+    await postJson(`${baseUrl}/api/channels/docs-knowledge-swarm-parent/messages`, {
+      fromTerminalId: "docs-knowledge-swarm-1",
+      content: "PROGRESS: parser written, tests still failing",
+    });
+
+    const ledger = JSON.parse(
+      readFileSync(
+        join(workspaceCwd, ".octogent", "state", "swarms", "docs-knowledge.json"),
+        "utf8",
+      ),
+    ) as { items: Array<{ index: number; status: string; notes: Array<{ text: string }> }> };
+    expect(ledger.items).toMatchObject([
+      { index: 0, status: "done" },
+      { index: 1, status: "working", notes: [{ text: "parser written, tests still failing" }] },
+      { index: 2, status: "working" },
+    ]);
+    const markdown = readFileSync(
+      join(workspaceCwd, ".octogent", "tentacles", "docs-knowledge", "swarm-progress.md"),
+      "utf8",
+    );
+    expect(markdown).toContain("[x] #0 item 0");
+  });
+
+  it("warns every agent to checkpoint at 80% of the budget", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    writeSwarmTentacle(workspaceCwd, 3);
+
+    const baseUrl = await startServer({ workspaceCwd, promptsDir: repoPromptsDir });
+    await postJson(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`, {
+      workspaceMode: "shared",
+      budgetTokens: 5000,
+    });
+    await postJson(`${baseUrl}/api/terminals`, {
+      terminalId: "docs-knowledge-swarm-0",
+      tentacleId: "docs-knowledge",
+      parentTerminalId: "docs-knowledge-swarm-parent",
+      workspaceMode: "shared",
+    });
+    await reportToolUse(
+      baseUrl,
+      "docs-knowledge-swarm-0",
+      writeTranscript(workspaceCwd, "worker-0", 4100),
+    );
+
+    await waitForBudget(baseUrl, (b) =>
+      (b.attempts as Array<{ warned?: boolean }>).some((a) => a.warned),
+    );
+    const timeoutAt = Date.now() + 3_000;
+    let contents: string[] = [];
+    while (Date.now() < timeoutAt) {
+      const response = await fetch(`${baseUrl}/api/channels/docs-knowledge-swarm-0/messages`);
+      const data = (await response.json()) as { messages: Array<{ content: string }> };
+      contents = data.messages.map((m) => m.content);
+      if (contents.length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(contents.join("\n")).toContain("BUDGET WARNING");
+    expect(contents.join("\n")).toContain("PROGRESS:");
+    const budget = (await (
+      await fetch(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm/budget`)
+    ).json()) as { outcome: string };
+    expect(budget.outcome).toBe("running");
+  });
+
+  it("hands a retry worker the notes its item's last worker left", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    writeSwarmTentacle(workspaceCwd, 3);
+
+    const baseUrl = await startServer({ workspaceCwd, promptsDir: repoPromptsDir });
+    await postJson(`${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`, {
+      workspaceMode: "shared",
+      budgetTokens: 1000,
+      maxAttempts: 2,
+    });
+    await postJson(`${baseUrl}/api/channels/docs-knowledge-swarm-parent/messages`, {
+      fromTerminalId: "docs-knowledge-swarm-1",
+      content: "PROGRESS: renamed the helpers in utils.ts, call sites not updated yet",
+    });
+    await reportToolUse(
+      baseUrl,
+      "docs-knowledge-swarm-parent",
+      writeTranscript(workspaceCwd, "attempt-1", 1200),
+    );
+    await waitForBudget(baseUrl, (b) => b.attempts.length === 2);
+
+    const retryPrompt = await readParentPrompt(workspaceCwd, "docs-knowledge-swarm-a2-parent");
+    expect(retryPrompt).toContain("Progress From An Earlier Attempt");
+    expect(retryPrompt).toContain("call sites not updated yet");
+  });
+
+  it("resumes after a restart, skipping remembered done items and carrying notes", async () => {
+    const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
+    temporaryDirectories.push(workspaceCwd);
+    writeSwarmTentacle(workspaceCwd, 3);
+
+    let baseUrl = await startServer({ workspaceCwd, promptsDir: repoPromptsDir });
+    const swarmUrl = () => `${baseUrl}/api/deck/tentacles/docs-knowledge/swarm`;
+    expect((await postJson(swarmUrl(), { resume: true })).status).toBe(400);
+
+    await postJson(swarmUrl(), { workspaceMode: "shared" });
+    await postJson(`${baseUrl}/api/channels/docs-knowledge-swarm-parent/messages`, {
+      fromTerminalId: "docs-knowledge-swarm-0",
+      content: "DONE: item 0",
+    });
+    await postJson(`${baseUrl}/api/channels/docs-knowledge-swarm-parent/messages`, {
+      fromTerminalId: "docs-knowledge-swarm-2",
+      content: "PROGRESS: glossary skeleton in docs/glossary.md",
+    });
+
+    // Restart: every agent session ends, only what is on disk remains.
+    await stopServer?.();
+    stopServer = null;
+    baseUrl = await startServer({ workspaceCwd, promptsDir: repoPromptsDir });
+    const removed = await fetch(`${baseUrl}/api/terminals/docs-knowledge-swarm-parent`, {
+      method: "DELETE",
+    });
+    expect(removed.status).toBe(204);
+
+    const resumed = await postJson(swarmUrl(), { workspaceMode: "shared", resume: true });
+    expect(resumed.status).toBe(201);
+    const body = (await resumed.json()) as { workers: Array<{ todoIndex: number }> };
+    expect(body.workers.map((w) => w.todoIndex)).toEqual([1, 2]);
+
+    const prompt = await readParentPrompt(
+      workspaceCwd,
+      "docs-knowledge-swarm-parent",
+      "Progress From An Earlier Attempt",
+    );
+    expect(prompt).toContain("glossary skeleton in docs/glossary.md");
+    const ledger = JSON.parse(
+      readFileSync(
+        join(workspaceCwd, ".octogent", "state", "swarms", "docs-knowledge.json"),
+        "utf8",
+      ),
+    ) as { items: Array<{ index: number; status: string }> };
+    expect(ledger.items.find((i) => i.index === 0)?.status).toBe("done");
+  });
+
   it("validates budget settings before starting any agents", async () => {
     const workspaceCwd = mkdtempSync(join(tmpdir(), "octogent-api-test-"));
     temporaryDirectories.push(workspaceCwd);

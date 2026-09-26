@@ -27,6 +27,8 @@ export type SwarmLaunchOptions = {
   attempt?: number;
   /** Markdown telling the coordinator about its token budget and any earlier attempt. */
   budgetSection?: string;
+  /** PROGRESS notes left on items by earlier attempts, keyed by todo index. */
+  itemNotes?: ReadonlyMap<number, readonly string[]>;
 };
 
 export type SwarmLaunchResult = {
@@ -67,12 +69,27 @@ export const launchSwarm = async (
     coordinatorModel,
     attempt = 1,
     budgetSection,
+    itemNotes,
   }: SwarmLaunchOptions,
 ): Promise<SwarmLaunchResult> => {
   if (items.length === 0) {
     throw new RuntimeInputError("No incomplete todo items found.");
   }
   const idPrefix = swarmTerminalPrefix(tentacleId, attempt);
+
+  // Earlier attempts' checkpoints travel with the item, so its new worker
+  // continues from them instead of starting the item over.
+  const buildEarlierProgressSection = (index: number): string => {
+    const notes = itemNotes?.get(index) ?? [];
+    if (notes.length === 0) return "";
+    return [
+      "",
+      "## Progress From An Earlier Attempt",
+      "",
+      "A previous worker started this item and left these notes before it was stopped. Check the current state of the files, then continue from there rather than starting over:",
+      ...notes.map((note) => `- ${note}`),
+    ].join("\n");
+  };
 
   // Todo order is priority order: the first items get a worker each, and the
   // overflow waits in the swarm queue for whichever worker finishes first.
@@ -248,7 +265,7 @@ export const launchSwarm = async (
       definitionOfDoneCommitStep: buildWorkerDefinitionOfDoneCommitStep(),
       workspaceReminder: buildWorkerReminder(),
       parentTerminalId: "",
-      parentSection: "",
+      parentSection: buildEarlierProgressSection(item.index),
     });
 
     runtime.createTerminal({
@@ -298,6 +315,14 @@ export const launchSwarm = async (
           "```bash",
           `node bin/octogent channel send ${parentTerminalId} "FINISHED" --from ${workerTerminalId}`,
           "```",
+          "",
+          "## Checkpoints",
+          "",
+          "If you get a BUDGET WARNING message, stop starting new work: finish the step you are on, commit it in worktree mode, and record where you are so the work is not lost if you are stopped:",
+          "```bash",
+          `node bin/octogent channel send ${parentTerminalId} "PROGRESS: <what is done, what is left, which files>" --from ${workerTerminalId}`,
+          "```",
+          buildEarlierProgressSection(item.index),
         ].join("\n");
 
         const promptVariables = JSON.stringify({

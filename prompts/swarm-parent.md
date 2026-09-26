@@ -66,6 +66,8 @@ Not all worker signals mean the same thing. Match your response to their state:
 
 - **DONE** — Worker finished one item and is claiming the next from the queue. Acknowledge receipt, note it, but do NOT start merging yet.
 - **FINISHED** — Worker has no more items (the queue returned empty). Once every worker has sent FINISHED, move on to the completion strategy.
+- **PROGRESS** — A checkpoint note on the worker's current item. Octogent records it so the work survives a stop; no reply is needed.
+- **BUDGET WARNING** (from `octogent`) — The swarm's token budget is nearly spent. Stop starting new work and let workers checkpoint.
 - **BLOCKED** — Worker is stuck. Read their message carefully, investigate the issue (check their branch, read relevant code), and send specific, actionable guidance. Don't send vague encouragement like "try again" or "keep going."
 - **Silent** — A worker that hasn't reported in a while may be stuck without knowing how to ask for help, or may still be working. Check their channel. If no messages after two check cycles, send a status request.
 

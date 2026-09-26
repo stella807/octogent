@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { TentacleWorkspaceMode, TerminalAgentProvider } from "@octogent/core";
 
 import type { SwarmBudgetSnapshot, SwarmBudgetStore } from "../deck/swarmBudget";
+import type { SwarmProgressStore } from "../deck/swarmProgress";
 import { logVerbose } from "../logging";
 import type { TranscriptUsageReader } from "../terminalRuntime/transcriptUsage";
 import { type SwarmLaunchDependencies, launchSwarm, swarmTerminalPrefix } from "./swarmLauncher";
@@ -78,10 +79,12 @@ export const buildBudgetSection = ({
 export const createSwarmBudgetEnforcer = ({
   launchDependencies,
   budgets,
+  progress,
   usageReader,
 }: {
   launchDependencies: SwarmLaunchDependencies;
   budgets: SwarmBudgetStore;
+  progress: SwarmProgressStore;
   usageReader: TranscriptUsageReader;
 }) => {
   const { runtime, workspaceCwd } = launchDependencies;
@@ -105,14 +108,9 @@ export const createSwarmBudgetEnforcer = ({
     }
   };
 
-  const findDoneItems = (items: SwarmItem[], parentTerminalId: string | null): SwarmItem[] => {
-    if (!parentTerminalId) return [];
-    const reported = runtime
-      .listChannelMessages(parentTerminalId)
-      .map((message) => message.content.trim())
-      .filter((content) => content.startsWith("DONE:"))
-      .map((content) => content.slice("DONE:".length).trim());
-    return items.filter((item) => reported.some((text) => text.startsWith(item.text.trim())));
+  const findDoneItems = (tentacleId: string, items: SwarmItem[]): SwarmItem[] => {
+    const done = new Set(progress.doneIndices(tentacleId));
+    return items.filter((item) => done.has(item.index));
   };
 
   const describeAttempt = (snapshot: SwarmBudgetSnapshot, attempt: number) => {
@@ -138,9 +136,11 @@ export const createSwarmBudgetEnforcer = ({
       }
     }
 
+    progress.releaseWorking(tentacleId);
+
     const prefix = swarmTerminalPrefix(tentacleId, attempt);
     const parentTerminalId = record.terminalIds.find((id) => id === `${prefix}-parent`) ?? null;
-    const doneItems = findDoneItems(settings.items, parentTerminalId);
+    const doneItems = findDoneItems(tentacleId, settings.items);
     const remaining = settings.items.filter((item) => !doneItems.includes(item));
     const carriedBranches =
       settings.workerWorkspaceMode === "worktree"
@@ -169,6 +169,7 @@ export const createSwarmBudgetEnforcer = ({
           workerModel: settings.workerModel,
           coordinatorModel: settings.coordinatorModel,
           attempt: nextAttempt,
+          itemNotes: progress.notesFor(tentacleId),
           budgetSection: buildBudgetSection({
             budgetTokens: snapshot.budgetTokens,
             attempt: nextAttempt,
@@ -177,6 +178,15 @@ export const createSwarmBudgetEnforcer = ({
           }),
         });
         budgets.startAttempt(tentacleId, result.terminalIds);
+        progress.startAttempt(tentacleId, {
+          attempt: nextAttempt,
+          parentTerminalId: result.parentTerminalId,
+          items: remaining,
+          assignments: result.workers.map((w) => ({
+            terminalId: w.terminalId,
+            index: w.todoIndex,
+          })),
+        });
         settingsByTentacle.set(tentacleId, { ...settings, items: remaining });
         writeReport(
           tentacleId,
@@ -222,6 +232,32 @@ export const createSwarmBudgetEnforcer = ({
       let total = 0;
       for (const path of paths) total += usageReader.read(path);
       budgets.recordUsage(terminalId, total);
+    },
+
+    /**
+     * At the warning threshold, asks every agent in the attempt to wind down
+     * and checkpoint, so a hard stop that follows loses as little as possible.
+     */
+    handleWarning(tentacleId: string, attempt: number) {
+      const snapshot = budgets.snapshot(tentacleId);
+      const record = snapshot?.attempts[attempt - 1];
+      if (!snapshot || !record) return;
+      const parentTerminalId = `${swarmTerminalPrefix(tentacleId, attempt)}-parent`;
+      const hasParent = record.terminalIds.includes(parentTerminalId);
+      const used = `${formatTokens(record.spentTokens)} of ${formatTokens(snapshot.budgetTokens)}`;
+      const workerMessage = hasParent
+        ? `BUDGET WARNING: this swarm has used ${used} tokens. Do not start new work. Finish your current step (commit it in worktree mode), then report where you are: node bin/octogent channel send ${parentTerminalId} "PROGRESS: <what is done, what is left, which files>" --from <your terminal id>. If your item is complete, report DONE instead. Then wait.`
+        : `BUDGET WARNING: this swarm has used ${used} tokens. Do not start new work. Finish your current step and commit it if you are in a worktree, then stop.`;
+      const parentMessage = `BUDGET WARNING: this swarm has used ${used} tokens. Workers have been told to checkpoint. Do not start reviews, merges, or new instructions now; if the budget runs out, Octogent stops everyone and keeps the workers' PROGRESS notes for ${attempt < snapshot.maxAttempts ? "the next attempt" : "a later resume"}.`;
+
+      for (const terminalId of record.terminalIds) {
+        const sent = runtime.sendChannelMessage(
+          terminalId,
+          "octogent",
+          terminalId === parentTerminalId ? parentMessage : workerMessage,
+        );
+        if (sent) logVerbose(`[Budget] warned ${terminalId} (${tentacleId} attempt ${attempt})`);
+      }
     },
 
     handleExceeded(tentacleId: string, attempt: number) {

@@ -78,4 +78,21 @@ describe("swarm budget", () => {
     expect(store.snapshot("docs")).toBeNull();
     expect(onExceeded).not.toHaveBeenCalled();
   });
+
+  it("warns once at 80% of the budget, before the hard stop", () => {
+    const onExceeded = vi.fn();
+    const onWarning = vi.fn();
+    const store = createSwarmBudgetStore({ onExceeded, onWarning });
+    store.open("docs", { budgetTokens: 1000, maxAttempts: 1 });
+    store.startAttempt("docs", ["docs-swarm-0"]);
+
+    store.recordUsage("docs-swarm-0", 799);
+    expect(onWarning).not.toHaveBeenCalled();
+    store.recordUsage("docs-swarm-0", 800);
+    store.recordUsage("docs-swarm-0", 900);
+    expect(onWarning).toHaveBeenCalledTimes(1);
+    expect(onWarning).toHaveBeenCalledWith("docs", 1);
+    expect(store.snapshot("docs")?.attempts[0]?.warned).toBe(true);
+    expect(onExceeded).not.toHaveBeenCalled();
+  });
 });

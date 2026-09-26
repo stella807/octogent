@@ -8,6 +8,7 @@ import type { ClaudeUsageSnapshot } from "../claudeUsage";
 import type { CodeIntelStore } from "../codeIntelStore";
 import type { CodexUsageSnapshot } from "../codexUsage";
 import type { SwarmBudgetStore } from "../deck/swarmBudget";
+import type { SwarmProgressStore } from "../deck/swarmProgress";
 import type { SwarmQueueStore } from "../deck/swarmQueue";
 import type { GitHubRepoSummarySnapshot } from "../githubRepoSummary";
 import { logVerbose } from "../logging";
@@ -110,6 +111,7 @@ type CreateApiRequestHandlerOptions = {
   swarmQueues: SwarmQueueStore;
   swarmBudgets: SwarmBudgetStore;
   swarmBudgetEnforcer: SwarmBudgetEnforcer;
+  swarmProgress: SwarmProgressStore;
   allowRemoteAccess: boolean;
 };
 
@@ -225,6 +227,7 @@ export const createApiRequestHandler = ({
   swarmQueues,
   swarmBudgets,
   swarmBudgetEnforcer,
+  swarmProgress,
   allowRemoteAccess,
 }: CreateApiRequestHandlerOptions) => {
   const resolvedWebDistDir = webDistDir && existsSync(webDistDir) ? webDistDir : null;
@@ -249,6 +252,7 @@ export const createApiRequestHandler = ({
     swarmQueues,
     swarmBudgets,
     swarmBudgetEnforcer,
+    swarmProgress,
   };
 
   return async (request: IncomingMessage, response: ServerResponse) => {

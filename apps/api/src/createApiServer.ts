@@ -19,6 +19,7 @@ import {
 import type { CreateApiServerOptions } from "./createApiServer/types";
 import { createUpgradeHandler } from "./createApiServer/upgradeHandler";
 import { createSwarmBudgetStore } from "./deck/swarmBudget";
+import { createSwarmProgressStore } from "./deck/swarmProgress";
 import { createSwarmQueueStore } from "./deck/swarmQueue";
 import { readGithubRepoSummary as readGithubRepoSummaryDefault } from "./githubRepoSummary";
 import { createMonitorService } from "./monitor";
@@ -105,6 +106,7 @@ export const createApiServer = ({
   let swarmBudgetEnforcer: SwarmBudgetEnforcer | null = null;
   const swarmBudgets = createSwarmBudgetStore({
     onExceeded: (tentacleId, attempt) => swarmBudgetEnforcer?.handleExceeded(tentacleId, attempt),
+    onWarning: (tentacleId, attempt) => swarmBudgetEnforcer?.handleWarning(tentacleId, attempt),
   });
 
   const runtimeOptions: Parameters<typeof createTerminalRuntime>[0] = {
@@ -130,6 +132,10 @@ export const createApiServer = ({
 
   const codeIntelStore = createCodeIntelStore(resolvedStateDir);
   const swarmQueues = createSwarmQueueStore();
+  const swarmProgress = createSwarmProgressStore({
+    workspaceCwd: resolvedWorkspaceCwd,
+    stateDir: resolvedStateDir,
+  });
   const enforcer = createSwarmBudgetEnforcer({
     launchDependencies: {
       runtime,
@@ -140,6 +146,7 @@ export const createApiServer = ({
       swarmQueues,
     },
     budgets: swarmBudgets,
+    progress: swarmProgress,
     usageReader: createTranscriptUsageReader(),
   });
   swarmBudgetEnforcer = enforcer;
@@ -165,6 +172,7 @@ export const createApiServer = ({
     swarmQueues,
     swarmBudgets,
     swarmBudgetEnforcer: enforcer,
+    swarmProgress,
     allowRemoteAccess,
   });
 

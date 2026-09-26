@@ -617,6 +617,46 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
     }
   }
 
+  // Resume: continue from the saved progress ledger instead of starting over.
+  if (body.resume !== undefined && typeof body.resume !== "boolean") {
+    writeJson(response, 400, { error: "resume must be true or false." }, corsOrigin);
+    return true;
+  }
+  const resume = body.resume === true;
+  const { swarmProgress } = dependencies;
+  let itemNotes: Map<number, string[]> | undefined;
+  if (resume) {
+    const ledger = swarmProgress.read(tentacleId);
+    if (!ledger) {
+      writeJson(
+        response,
+        400,
+        { error: "No saved swarm progress for this tentacle to resume from." },
+        corsOrigin,
+      );
+      return true;
+    }
+    // Matched by text, not index, so edits that shift todo.md do not
+    // mark the wrong items as already done.
+    const doneTexts = new Set(
+      ledger.items.filter((item) => item.status === "done").map((item) => item.text.trim()),
+    );
+    targetItems = targetItems.filter((item) => !doneTexts.has(item.text.trim()));
+    if (targetItems.length === 0) {
+      writeJson(
+        response,
+        400,
+        {
+          error:
+            "Every open todo item is already reported done in the saved progress. Review the work and tick the items in todo.md.",
+        },
+        corsOrigin,
+      );
+      return true;
+    }
+    itemNotes = swarmProgress.notesFor(tentacleId);
+  }
+
   // Check for existing swarm terminals to prevent duplicates.
   const existingSwarmIds = runtime
     .listTerminalSnapshots()
@@ -641,6 +681,7 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
       agentProvider: agentProviderResult.agentProvider,
       workerModel,
       coordinatorModel,
+      ...(itemNotes ? { itemNotes } : {}),
       ...(budget
         ? {
             budgetSection: buildBudgetSection({
@@ -658,6 +699,14 @@ export const handleDeckTentacleSwarmRoute: ApiRouteHandler = async (
     }
     throw error;
   }
+
+  swarmProgress.startAttempt(tentacleId, {
+    attempt: 1,
+    parentTerminalId: result.parentTerminalId,
+    items: targetItems,
+    assignments: result.workers.map((w) => ({ terminalId: w.terminalId, index: w.todoIndex })),
+    continueExisting: resume,
+  });
 
   const { swarmBudgets, swarmBudgetEnforcer } = dependencies;
   if (budget) {
@@ -685,7 +734,7 @@ const DECK_TENTACLE_SWARM_QUEUE_PATTERN =
 
 export const handleDeckTentacleSwarmQueueRoute: ApiRouteHandler = async (
   { request, response, requestUrl, corsOrigin },
-  { swarmQueues, swarmBudgets },
+  { swarmQueues, swarmBudgets, swarmProgress },
 ) => {
   const match = requestUrl.pathname.match(DECK_TENTACLE_SWARM_QUEUE_PATTERN);
   if (!match) return false;
@@ -750,6 +799,17 @@ export const handleDeckTentacleSwarmQueueRoute: ApiRouteHandler = async (
     return true;
   }
 
-  writeJson(response, 200, { item: result.item, remaining: result.remaining }, corsOrigin);
+  if (result.item) {
+    swarmProgress.recordClaim(tentacleId, terminalId, result.item.todoIndex);
+  }
+  const notes = result.item
+    ? (swarmProgress.notesFor(tentacleId).get(result.item.todoIndex) ?? [])
+    : [];
+  writeJson(
+    response,
+    200,
+    { item: result.item, remaining: result.remaining, ...(notes.length > 0 ? { notes } : {}) },
+    corsOrigin,
+  );
   return true;
 };

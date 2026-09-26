@@ -47,9 +47,10 @@ Creating a terminal registers metadata first. A PTY starts immediately only when
 - `PATCH /api/deck/tentacles/:tentacleId/todo/edit` - edits the text of a todo item
 - `POST /api/deck/tentacles/:tentacleId/todo/delete` - deletes a todo item
 - `GET /api/deck/tentacles/:tentacleId/files/:filename` - reads one markdown file from the tentacle vault
-- `POST /api/deck/tentacles/:tentacleId/swarm` - spawns worker terminals from incomplete todo items; items beyond the child cap are returned as `queuedItems` and wait in the swarm queue. Optional body fields: `workspaceMode`, `agentProvider`, `workerModel`, `coordinatorModel`, `budgetTokens` (1,000 to 1,000,000,000), `maxAttempts` (1-3, needs `budgetTokens`)
-- `POST /api/deck/tentacles/:tentacleId/swarm/claim` - a pool worker (`{ "terminalId": ... }`) claims the next queued item; returns `{ item, remaining }` with `item: null` once the queue is empty, 403 for terminals outside the pool, 404 when the tentacle has no swarm queue
+- `POST /api/deck/tentacles/:tentacleId/swarm` - spawns worker terminals from incomplete todo items; items beyond the child cap are returned as `queuedItems` and wait in the swarm queue. Optional body fields: `workspaceMode`, `agentProvider`, `workerModel`, `coordinatorModel`, `budgetTokens` (1,000 to 1,000,000,000), `maxAttempts` (1-3, needs `budgetTokens`), `resume` (skip items the saved progress ledger shows done and hand workers their items' notes; 400 when there is no ledger)
+- `POST /api/deck/tentacles/:tentacleId/swarm/claim` - a pool worker (`{ "terminalId": ... }`) claims the next queued item; returns `{ item, remaining, notes? }` with `item: null` once the queue is empty and `notes` holding earlier PROGRESS notes for the item, 403 for terminals outside the pool, 404 when the tentacle has no swarm queue
 - `GET /api/deck/tentacles/:tentacleId/swarm/queue` - lists pending and claimed queue items
+- `POST /api/channels/:terminalId/messages` sent to a swarm coordinator with `DONE: <item>` or `PROGRESS: <note>` also updates that swarm's progress ledger (`swarms/<tentacleId>.json` in the project state directory)
 - `GET /api/deck/tentacles/:tentacleId/swarm/budget` - the swarm's token budget, spend per attempt and per agent, and its `outcome` (`running`, `retrying`, or `exhausted`); 404 when the swarm has no budget
 
 Deck routes treat `.octogent/tentacles/<tentacle-id>/` as the source of truth for agent-facing context. Todo operations update `todo.md` by parsed item index. Swarm operations derive worker assignments from incomplete parsed todo items.

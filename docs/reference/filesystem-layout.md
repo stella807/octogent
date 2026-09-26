@@ -25,6 +25,8 @@ Tentacle example:
       routes.md
 ```
 
+Swarms also write two generated reports into the tentacle folder: `swarm-progress.md` (which items are done, who holds the rest, and workers' PROGRESS notes) and `swarm-budget.md` (spend and outcome of each budgeted attempt). Octogent rewrites both; do not edit them by hand.
+
 `CONTEXT.md` may end with a managed `Suggested Skills` block when the operator or planner attaches Claude Code skills to that tentacle.
 
 Deck also writes UI metadata for tentacles, but not into these markdown files. Color, status, appearance, paths, and tags are stored in global deck state.
@@ -54,8 +56,11 @@ Notable files:
 - `monitor-config.json`
 - `monitor-cache.json`
 - `code-intel.jsonl`
+- `swarms/<tentacleId>.json`
 
 `tentacles.json` is the terminal registry despite the historical name. It stores terminal records, lifecycle state, UI state, parent-child links, workspace mode, worktree IDs, and display names.
+
+`swarms/<tentacleId>.json` is a swarm's progress ledger: each item's status, the terminal holding it, and PROGRESS notes. It is written atomically and outlives agent sessions, which is what `swarm start --resume` reads.
 
 `deck.json` stores Deck presentation metadata that is not part of the agent-facing tentacle files.
 
