@@ -9,6 +9,9 @@ import { DEFAULT_WF_OPTIONS, walkForward, type Objective } from './backtest/walk
 import { loadCsv } from './data/csv.ts';
 import { fetchCandles, listMarkets } from './data/exchange.ts';
 import { mapPool } from './concurrency.ts';
+import { buildSwarm, DEFAULT_SWARM, forecastAt } from './swarm/swarm.ts';
+import { evaluateSwarm } from './swarm/score.ts';
+import { formatScorecard, formatSwarmForecast } from './swarm/format.ts';
 import { barsForRange, clipToRange, parseRange, type DateRange } from './data/range.ts';
 import { generateCandles } from './data/synthetic.ts';
 import { BENCHMARK_LIMITS, CONSERVATIVE_LIMITS, DEFAULT_LIMITS, type RiskLimits } from './risk/risk-manager.ts';
@@ -44,6 +47,7 @@ quant-bot — crypto strategy research and paper trading
   paper        Trade live market data with simulated fills (no real money)
   status       Paper account profit/loss and every open position
   screen       Walk-forward test a strategy on every --quote market of an exchange; keep what passes
+  swarm        Simulate a crowd of rule-based traders to forecast P(up); --evaluate scores it honestly
   live         Trade real funds. Requires --live and ${LIVE_CONFIRM_ENV}=${LIVE_CONFIRM_VALUE}
 
 Data (pick one; defaults to --synthetic so it runs with no network)
@@ -63,6 +67,9 @@ Common
   --min-trades 10        screen: out-of-sample trades a pass needs
   --min-efficiency 0.5   screen: walk-forward efficiency a pass needs
   --concurrency 8        screen: markets fetched at once (one shared, rate-limited connection)
+  --horizon 1            swarm: bars ahead to forecast
+  --paths 500            swarm: simulated futures per forecast (horizon > 1)
+  --evaluate             swarm: score every past forecast instead of printing today's
   --strategies A,B       Strategies to run at once, for the blend command
   --weights 0.5,0.5       Capital split for blend (default: equal)
   --timeframe 1d         1m 5m 15m 1h 4h 1d
@@ -97,6 +104,9 @@ export async function main(argv: readonly string[]): Promise<number> {
       'min-trades': { type: 'string', default: String(DEFAULT_SCREEN.minTrades) },
       'min-efficiency': { type: 'string', default: String(DEFAULT_SCREEN.minEfficiency) },
       concurrency: { type: 'string', default: '8' },
+      horizon: { type: 'string', default: '1' },
+      paths: { type: 'string', default: String(DEFAULT_SWARM.paths) },
+      evaluate: { type: 'boolean', default: false },
       strategies: { type: 'string' },
       weights: { type: 'string' },
       exchange: { type: 'string', default: 'binance' },
@@ -391,6 +401,25 @@ export async function main(argv: readonly string[]): Promise<number> {
       const summary = paperStatus(account, state, prices);
       if (values.json) emit(summary);
       else process.stdout.write(`${formatPaperStatus(summary)}\n`);
+      return 0;
+    }
+
+    case 'swarm': {
+      const candles = await loadData();
+      const horizon = Math.trunc(num(values.horizon, 'horizon'));
+      const swarmConfig = { ...DEFAULT_SWARM, paths: Math.trunc(num(values.paths, 'paths')) };
+      const symbol = values.synthetic ? 'synthetic' : values.symbol as string;
+      if (values.evaluate) {
+        const { card } = evaluateSwarm(candles, { horizon, config: swarmConfig });
+        if (values.json) emit(card);
+        else process.stdout.write(`${formatScorecard(card, symbol, timeframe, horizon)}\n`);
+        return 0;
+      }
+      const state = buildSwarm(candles, swarmConfig);
+      const last = candles.length - 1;
+      const forecast = forecastAt(state, last, horizon);
+      if (values.json) emit(forecast);
+      else process.stdout.write(`${formatSwarmForecast(forecast, symbol, timeframe, (candles[last] as Candle).close)}\n`);
       return 0;
     }
 

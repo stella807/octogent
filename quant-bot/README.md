@@ -199,6 +199,7 @@ node --experimental-strip-types src/cli.ts compare \
 | `screen` | Walk-forward tests a strategy on every market an exchange lists, and keeps only what passes |
 | `paper` | Live market data, simulated fills, no real money. One symbol or many on one account |
 | `status` | The paper account: equity, profit/loss, every open position, closed trades by symbol |
+| `swarm` | A crowd of rule-based traders forecasts P(up); `--evaluate` scores every past forecast |
 | `live` | Real orders. Two independent gates stand in front of it. |
 
 ### Trading everything that passes, on one account
@@ -696,6 +697,64 @@ and none of that protection.
 
 The grid wins more than three trades in four and still loses money, because
 it is most heavily loaded exactly when price is falling hardest.
+
+## A free swarm simulator, scored honestly
+
+MiroFish-style "swarm intelligence" builds a crowd of simulated agents,
+lets them interact, and replays the future many times. It needs a paid
+language model for every agent. `swarm` does the same thing with rule-based
+agents, which is how agent-based market models worked for decades before
+LLMs: free, local, milliseconds per forecast.
+
+- **The crowd**: trend followers and contrarians, each on 2, 5, 10, 20, 50
+  and 100-bar horizons. Noise traders are the part of each move the rest of
+  the crowd does not explain.
+- **Social evolution**: each style's paper profit is scored every bar and
+  the crowd drifts toward what has been working (Brock-Hommes adaptive
+  beliefs).
+- **The sandbox**: from the latest real bar, play the crowd forward and
+  count the futures that end up. That count is P(up) — directly comparable
+  to a Polymarket "Up or Down" price.
+- **The part MiroFish lacks**: `--evaluate` makes a forecast at every past
+  bar from earlier bars only, and scores it (Brier) against what happened
+  and against two free baselines: always saying 50%, and the recent
+  historical up-rate.
+
+```bash
+pnpm cli swarm --exchange coinbase --symbol BTC/USD --timeframe 5m --bars 3000
+pnpm cli swarm --exchange coinbase --symbol BTC/USD --timeframe 5m --bars 3000 --evaluate
+```
+
+It is built so it cannot flatter itself. How strongly the crowd's net vote
+moves price is fitted only on past bars, and shrunk toward zero unless it
+stands out from its own standard error; when the crowd has shown no
+predictive power the forecast says so and falls back to the up-rate. The
+tests hold it to both sides: it must find real skill on synthetic prices
+that genuinely trend (t = 3.9) or genuinely mean-revert (t = 3.3), and it
+must claim none on random walks.
+
+Getting there took two fixes the scorecard forced. The first crowd had a
+2-bar trend follower but no 2-bar contrarian, so it could not see reversal.
+The second was more interesting: with a ~20-bar memory the crowd chased
+luck — in a reverting market its dominant style changed every 5 bars, and
+its live vote kept a third of the signal its average mix had (correlation
+0.09 vs 0.28). A ~100-bar memory fixed it. Herding toward whatever just
+worked is how real crowds get whipsawed, and the simulation reproduced it.
+
+On real Coinbase prices, every forecast made from past bars only:
+
+| market | forecasts | skill vs historical up-rate | verdict |
+|---|---|---|---|
+| BTC/USD daily | 2,627 | -0.10% (t -0.39) | none |
+| ETH/USD daily | 2,627 | -0.22% (t -0.97) | none |
+| SOL/USD daily | 1,558 | -0.05% (t -0.18) | none |
+| BTC/USD hourly | 2,627 | -0.63% (t -2.10) | slightly worse |
+| BTC/USD 5-minute | 2,627 | -0.05% (t -0.22) | none |
+
+The best forecaster in every row was "always say 50%". The hourly result
+is borderline — one of five tests landing near |t| = 2 is what chance alone
+produces. The machinery finds structure when it exists; real crypto prices
+at these horizons do not contain any it can find.
 
 ## Strategies
 
