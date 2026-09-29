@@ -75,7 +75,7 @@ async function downloadCandles(options: FetchOptions): Promise<Candle[]> {
   const maxEmptyPages = 40;
 
   while (candles.length < options.bars) {
-    const page = await client.fetchOHLCV(options.symbol, options.timeframe, cursor, pageSize);
+    const page = await withRetry(() => client.fetchOHLCV(options.symbol, options.timeframe, cursor, pageSize));
     if (page.length === 0) {
       if (candles.length > 0 || emptyPages >= maxEmptyPages) break;
       emptyPages += 1;
@@ -138,13 +138,55 @@ export async function listMarkets(exchange: string, quote: string): Promise<stri
     .sort();
 }
 
-async function connect(exchange: string): Promise<CcxtExchange> {
-  const ccxt = await importCcxt();
-  const ExchangeClass = (ccxt as Record<string, unknown>)[exchange];
-  if (typeof ExchangeClass !== 'function') {
-    throw new Error(`ccxt has no exchange named "${exchange}"`);
+/**
+ * One client per exchange for the life of the process. A fresh client reloads
+ * the exchange's entire market list before its first request — 1.7s on
+ * Coinbase, paid again for every symbol — and separate clients each run their
+ * own rate limiter, so concurrent fetches could exceed the exchange's limit.
+ */
+const clients = new Map<string, Promise<CcxtExchange>>();
+
+function connect(exchange: string): Promise<CcxtExchange> {
+  let client = clients.get(exchange);
+  if (!client) {
+    client = (async () => {
+      const ccxt = await importCcxt();
+      const ExchangeClass = (ccxt as Record<string, unknown>)[exchange];
+      if (typeof ExchangeClass !== 'function') {
+        throw new Error(`ccxt has no exchange named "${exchange}"`);
+      }
+      return new (ExchangeClass as new (cfg: unknown) => CcxtExchange)({ enableRateLimit: true });
+    })();
+    // A failed connection must not be cached, or every later call inherits it.
+    client.catch(() => clients.delete(exchange));
+    clients.set(exchange, client);
   }
-  return new (ExchangeClass as new (cfg: unknown) => CcxtExchange)({ enableRateLimit: true });
+  return client;
+}
+
+/** ccxt error classes that mean "try again shortly", not "this request is wrong". */
+const TRANSIENT = new Set(['RateLimitExceeded', 'DDoSProtection', 'RequestTimeout', 'NetworkError', 'ExchangeNotAvailable']);
+
+/**
+ * Retries throttling and network failures with backoff. Without this, one
+ * 429 during a screen of hundreds of markets silently turns a market into
+ * "no data" and drops it from the results.
+ */
+export async function withRetry<T>(
+  request: () => Promise<T>,
+  attempts = 4,
+  delayMs = 1_000,
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await request();
+    } catch (error) {
+      const kind = error instanceof Error ? error.constructor.name : '';
+      if (attempt >= attempts || !TRANSIENT.has(kind)) throw error;
+      await wait(delayMs * 2 ** (attempt - 1));
+    }
+  }
 }
 
 interface CcxtExchange {

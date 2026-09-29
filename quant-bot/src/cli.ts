@@ -8,6 +8,7 @@ import { DEFAULT_MC_OPTIONS, monteCarlo } from './backtest/monte-carlo.ts';
 import { DEFAULT_WF_OPTIONS, walkForward, type Objective } from './backtest/walk-forward.ts';
 import { loadCsv } from './data/csv.ts';
 import { fetchCandles, listMarkets } from './data/exchange.ts';
+import { mapPool } from './concurrency.ts';
 import { barsForRange, clipToRange, parseRange, type DateRange } from './data/range.ts';
 import { generateCandles } from './data/synthetic.ts';
 import { BENCHMARK_LIMITS, CONSERVATIVE_LIMITS, DEFAULT_LIMITS, type RiskLimits } from './risk/risk-manager.ts';
@@ -61,6 +62,7 @@ Common
   --quote USD            screen: which markets to test when --symbols is not given
   --min-trades 10        screen: out-of-sample trades a pass needs
   --min-efficiency 0.5   screen: walk-forward efficiency a pass needs
+  --concurrency 8        screen: markets fetched at once (one shared, rate-limited connection)
   --strategies A,B       Strategies to run at once, for the blend command
   --weights 0.5,0.5       Capital split for blend (default: equal)
   --timeframe 1d         1m 5m 15m 1h 4h 1d
@@ -94,6 +96,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       quote: { type: 'string', default: 'USD' },
       'min-trades': { type: 'string', default: String(DEFAULT_SCREEN.minTrades) },
       'min-efficiency': { type: 'string', default: String(DEFAULT_SCREEN.minEfficiency) },
+      concurrency: { type: 'string', default: '8' },
       strategies: { type: 'string' },
       weights: { type: 'string' },
       exchange: { type: 'string', default: 'binance' },
@@ -407,21 +410,27 @@ export async function main(argv: readonly string[]): Promise<number> {
         objective: values.objective as Objective,
         config,
       };
-      const rows: ScreenRow[] = [];
-      for (const [i, symbol] of universe.entries()) {
-        process.stderr.write(`[${i + 1}/${universe.length}] ${symbol}\n`);
-        let candles: Candle[];
-        try {
-          candles = await loadCandles({
-            csv: undefined, synthetic: values.synthetic as boolean, symbol, exchange, timeframe, bars, range,
-            seed: Math.trunc(num(values.seed, 'seed')) + i,
-          });
-        } catch (error) {
-          rows.push(failedScreen(symbol, 0, `no data: ${error instanceof Error ? error.message : String(error)}`));
-          continue;
-        }
-        rows.push(screenSymbol(symbol, candles, factory, wfOptions, criteria));
-      }
+      let done = 0;
+      const started = Date.now();
+      const rows: ScreenRow[] = await mapPool(
+        universe,
+        Math.trunc(num(values.concurrency, 'concurrency')),
+        async (symbol, i): Promise<ScreenRow> => {
+          let row: ScreenRow;
+          try {
+            const candles = await loadCandles({
+              csv: undefined, synthetic: values.synthetic as boolean, symbol, exchange, timeframe, bars, range,
+              seed: Math.trunc(num(values.seed, 'seed')) + i,
+            });
+            row = screenSymbol(symbol, candles, factory, wfOptions, criteria);
+          } catch (error) {
+            row = failedScreen(symbol, 0, `no data: ${error instanceof Error ? error.message : String(error)}`);
+          }
+          done += 1;
+          process.stderr.write(`[${done}/${universe.length}] ${symbol} (${((Date.now() - started) / 1000).toFixed(0)}s)\n`);
+          return row;
+        },
+      );
       const passed = rows.filter((r) => r.passed).map((r) => r.symbol);
       await writeScreenFile(screenPath(values.state as string), {
         exchange, strategy: factory.name, timeframe, screenedAt: new Date().toISOString(), symbols: passed, rows,
