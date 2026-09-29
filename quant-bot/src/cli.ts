@@ -17,6 +17,7 @@ import type { Params } from './strategy/types.ts';
 import { PaperBroker } from './live/paper-broker.ts';
 import { ExchangeBroker, LIVE_CONFIRM_ENV, LIVE_CONFIRM_VALUE } from './live/exchange-broker.ts';
 import { LiveRunner } from './live/runner.ts';
+import { TelegramNotifier } from './live/notifier.ts';
 import { alignCandles, alignmentCoverage } from './portfolio/align.ts';
 import { alignSentiment, fetchSentiment } from './data/sentiment.ts';
 import type { StrategyContext } from './strategy/types.ts';
@@ -375,6 +376,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         limits,
         statePath: values.state as string,
         log: (message) => process.stdout.write(`${message}\n`),
+        notifier: TelegramNotifier.fromEnv(),
       }, config.startingEquity);
 
       const controller = new AbortController();

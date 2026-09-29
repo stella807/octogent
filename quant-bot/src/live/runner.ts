@@ -3,6 +3,7 @@ import { TIMEFRAME_MS } from '../domain/types.ts';
 import { RiskManager, type RiskLimits } from '../risk/risk-manager.ts';
 import type { StrategyFactory, Params } from '../strategy/types.ts';
 import type { Broker } from './broker.ts';
+import { NoopNotifier, type Notifier } from './notifier.ts';
 import { StateStore, type RunnerState } from './state-store.ts';
 
 export interface RunnerOptions {
@@ -14,6 +15,8 @@ export interface RunnerOptions {
   readonly limits: RiskLimits;
   readonly statePath: string;
   readonly log: (message: string) => void;
+  /** Pushed a message on the same events that get logged; defaults to doing nothing. */
+  readonly notifier?: Notifier;
 }
 
 export type Action =
@@ -51,12 +54,23 @@ export class LiveRunner {
   readonly #options: RunnerOptions;
   readonly #store: StateStore;
   readonly #risk: RiskManager;
+  readonly #notifier: Notifier;
   #state: RunnerState | null = null;
 
   constructor(options: RunnerOptions, startingEquity: number) {
     this.#options = options;
     this.#store = new StateStore(options.statePath);
     this.#risk = new RiskManager(startingEquity, options.limits);
+    this.#notifier = options.notifier ?? NoopNotifier;
+  }
+
+  /** Never lets a broken notifier affect a trade — only the message about it can fail. */
+  async #notify(message: string): Promise<void> {
+    try {
+      await this.#notifier.notify(message);
+    } catch (error) {
+      this.#options.log(`notification failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async step(): Promise<StepOutcome> {
@@ -91,7 +105,9 @@ export class LiveRunner {
     if (risk.flatten) {
       if (balance.qty > 0) {
         const fill = await broker.marketSell(symbol, balance.qty);
-        log(`RISK HALT ${risk.reason} — sold ${fill.qty} at ${fill.price}`);
+        const message = `RISK HALT ${risk.reason} — sold ${fill.qty} at ${fill.price}`;
+        log(message);
+        await this.#notify(message);
       }
       state.killed = this.#risk.killed;
       state.killReason = risk.reason;
@@ -110,7 +126,9 @@ export class LiveRunner {
     // exchange; this check is the backstop, not the primary protection.
     if (position && state.stopPrice !== null && bar.close <= state.stopPrice) {
       const fill = await broker.marketSell(symbol, balance.qty);
-      log(`STOP hit at ${bar.close} (stop ${state.stopPrice}) — sold ${fill.qty} at ${fill.price}`);
+      const message = `STOP hit at ${bar.close} (stop ${state.stopPrice}) — sold ${fill.qty} at ${fill.price}`;
+      log(message);
+      await this.#notify(message);
       this.#clearPosition(state);
       state.lastBarTime = bar.time;
       await this.#store.save(state);
@@ -126,7 +144,9 @@ export class LiveRunner {
       const notional = Math.min(qty * price, balance.cash);
       if (notional > 0) {
         const fill = await broker.marketBuy(symbol, notional);
-        log(`BUY ${fill.qty.toFixed(8)} ${symbol} at ${fill.price} — ${detail}`);
+        const message = `BUY ${fill.qty.toFixed(8)} ${symbol} at ${fill.price} — ${detail}`;
+        log(message);
+        await this.#notify(message);
         state.entryPrice = fill.price;
         state.entryTime = fill.time;
         state.stopPrice = signal.stopPrice ?? null;
@@ -137,7 +157,9 @@ export class LiveRunner {
       }
     } else if (signal.target <= 0 && balance.qty > 0) {
       const fill = await broker.marketSell(symbol, balance.qty);
-      log(`SELL ${fill.qty.toFixed(8)} ${symbol} at ${fill.price} — ${detail}`);
+      const message = `SELL ${fill.qty.toFixed(8)} ${symbol} at ${fill.price} — ${detail}`;
+      log(message);
+      await this.#notify(message);
       this.#clearPosition(state);
       action = 'sold';
     } else if (balance.qty > 0 && signal.stopPrice !== undefined) {

@@ -8,6 +8,7 @@ import { PaperBroker } from '../src/live/paper-broker.ts';
 import { dropFormingBar, LiveRunner } from '../src/live/runner.ts';
 import { StateStore } from '../src/live/state-store.ts';
 import { ExchangeBroker, LIVE_CONFIRM_ENV } from '../src/live/exchange-broker.ts';
+import { NoopNotifier, TelegramNotifier, type Notifier } from '../src/live/notifier.ts';
 import { DEFAULT_LIMITS, BENCHMARK_LIMITS } from '../src/risk/risk-manager.ts';
 import { buyAndHold } from '../src/strategy/index.ts';
 import type { Broker, Fill } from '../src/live/broker.ts';
@@ -88,6 +89,58 @@ describe('ExchangeBroker safety gate', () => {
   });
 });
 
+describe('NoopNotifier', () => {
+  it('resolves without doing anything', async () => {
+    await expect(NoopNotifier.notify('anything')).resolves.toBeUndefined();
+  });
+});
+
+describe('TelegramNotifier', () => {
+  it('POSTs the chat id and text to the Telegram API', async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: JSON.parse(init?.body as string) });
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+
+    const notifier = new TelegramNotifier({ botToken: 'tok', chatId: 'chat-1', fetchImpl });
+    await notifier.notify('BUY 0.001 BTC/USD at 50000');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe('https://api.telegram.org/bottok/sendMessage');
+    expect(calls[0]?.body).toEqual({ chat_id: 'chat-1', text: 'BUY 0.001 BTC/USD at 50000' });
+  });
+
+  it('throws when Telegram rejects the request, leaving the caller to decide what happens next', async () => {
+    const fetchImpl = (async () => new Response('bad token', { status: 401 })) as typeof fetch;
+    const notifier = new TelegramNotifier({ botToken: 'bad', chatId: 'chat-1', fetchImpl });
+    await expect(notifier.notify('hi')).rejects.toThrow(/401/);
+  });
+
+  describe('fromEnv', () => {
+    const keys = ['QUANT_BOT_TELEGRAM_BOT_TOKEN', 'QUANT_BOT_TELEGRAM_CHAT_ID'] as const;
+    const originals = keys.map((k) => process.env[k]);
+    afterEach(() => {
+      keys.forEach((k, i) => {
+        if (originals[i] === undefined) delete process.env[k];
+        else process.env[k] = originals[i];
+      });
+    });
+
+    it('falls back to NoopNotifier when the environment variables are unset', () => {
+      delete process.env['QUANT_BOT_TELEGRAM_BOT_TOKEN'];
+      delete process.env['QUANT_BOT_TELEGRAM_CHAT_ID'];
+      expect(TelegramNotifier.fromEnv()).toBe(NoopNotifier);
+    });
+
+    it('builds a real TelegramNotifier once both are set', () => {
+      process.env['QUANT_BOT_TELEGRAM_BOT_TOKEN'] = 'tok';
+      process.env['QUANT_BOT_TELEGRAM_CHAT_ID'] = 'chat-1';
+      expect(TelegramNotifier.fromEnv()).toBeInstanceOf(TelegramNotifier);
+    });
+  });
+});
+
 describe('dropFormingBar', () => {
   it('discards the bar that has not closed yet', () => {
     const now = 10 * HOUR;
@@ -143,6 +196,16 @@ class FakeBroker implements Broker {
   }
 }
 
+/** Records every message it was asked to send; can be made to fail on demand. */
+class FakeNotifier implements Notifier {
+  readonly messages: string[] = [];
+  shouldThrow = false;
+  async notify(message: string): Promise<void> {
+    if (this.shouldThrow) throw new Error('notifier unavailable');
+    this.messages.push(message);
+  }
+}
+
 describe('LiveRunner', () => {
   let dir: string;
   let statePath: string;
@@ -155,7 +218,7 @@ describe('LiveRunner', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  const makeRunner = (broker: Broker, limits = BENCHMARK_LIMITS): LiveRunner =>
+  const makeRunner = (broker: Broker, limits = BENCHMARK_LIMITS, notifier?: Notifier): LiveRunner =>
     new LiveRunner({
       broker,
       factory: buyAndHold,
@@ -165,6 +228,7 @@ describe('LiveRunner', () => {
       limits,
       statePath,
       log: () => {},
+      ...(notifier ? { notifier } : {}),
     }, 1_000);
 
   it('acts on a closed bar exactly once, so a restart loop cannot double-order', async () => {
@@ -227,6 +291,29 @@ describe('LiveRunner', () => {
     const outcome = await restarted.step();
     expect(outcome.action).toBe('halted');
     expect(outcome.detail).toMatch(/kill switch active/);
+  });
+
+  it('notifies on a real trade', async () => {
+    const candles = series([100, 100, 100], Date.now() - 10 * HOUR);
+    const broker = new FakeBroker(1_000, candles, 100);
+    const notifier = new FakeNotifier();
+
+    expect((await makeRunner(broker, BENCHMARK_LIMITS, notifier).step()).action).toBe('bought');
+
+    expect(notifier.messages).toHaveLength(1);
+    expect(notifier.messages[0]).toMatch(/^BUY /);
+  });
+
+  it('does not fail the trade when the notifier is unavailable', async () => {
+    const candles = series([100, 100, 100], Date.now() - 10 * HOUR);
+    const broker = new FakeBroker(1_000, candles, 100);
+    const notifier = new FakeNotifier();
+    notifier.shouldThrow = true;
+
+    const outcome = await makeRunner(broker, BENCHMARK_LIMITS, notifier).step();
+
+    expect(outcome.action).toBe('bought');
+    expect(broker.orders).toHaveLength(1);
   });
 });
 
