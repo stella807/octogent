@@ -1,5 +1,5 @@
 import type { Candle, Timeframe } from '../domain/types.ts';
-import type { Balance, Broker, Fill } from './broker.ts';
+import { OrderRejectedError, type Balance, type Broker, type Fill } from './broker.ts';
 
 export const LIVE_CONFIRM_ENV = 'QUANT_BOT_LIVE_CONFIRM';
 export const LIVE_CONFIRM_VALUE = 'yes-i-accept-the-risk';
@@ -96,15 +96,15 @@ export class ExchangeBroker implements Broker {
     const client = await this.#connect();
     const price = await this.lastPrice(symbol);
     const qty = quoteAmount / price;
-    const order = await client.createMarketBuyOrder(symbol, qty);
-    return toFill('buy', order, price, qty);
+    const order = await asRejection(client.createMarketBuyOrder(symbol, qty));
+    return toFill(symbol, 'buy', order, price, qty);
   }
 
   async marketSell(symbol: string, qty: number): Promise<Fill> {
     const client = await this.#connect();
     const price = await this.lastPrice(symbol);
-    const order = await client.createMarketSellOrder(symbol, qty);
-    return toFill('sell', order, price, qty);
+    const order = await asRejection(client.createMarketSellOrder(symbol, qty));
+    return toFill(symbol, 'sell', order, price, qty);
   }
 
   async #connect(): Promise<CcxtClient> {
@@ -139,8 +139,33 @@ export interface CcxtClient {
   createMarketSellOrder(symbol: string, qty: number): Promise<CcxtOrder>;
 }
 
-function toFill(side: 'buy' | 'sell', order: CcxtOrder, fallbackPrice: number, fallbackQty: number): Fill {
+/**
+ * ccxt signals a refused order with InvalidOrder (size, precision) or
+ * InsufficientFunds. Those are permanent for this order; everything else —
+ * timeouts, rate limits, exchange downtime — stays a plain error so the
+ * runner retries it on the next poll.
+ */
+async function asRejection(order: Promise<CcxtOrder>): Promise<CcxtOrder> {
+  try {
+    return await order;
+  } catch (error) {
+    const kind = error instanceof Error ? error.constructor.name : '';
+    if (kind === 'InvalidOrder' || kind === 'InsufficientFunds' || kind === 'OrderNotFillable') {
+      throw new OrderRejectedError((error as Error).message);
+    }
+    throw error;
+  }
+}
+
+function toFill(
+  symbol: string,
+  side: 'buy' | 'sell',
+  order: CcxtOrder,
+  fallbackPrice: number,
+  fallbackQty: number,
+): Fill {
   return {
+    symbol,
     side,
     qty: order.filled ?? fallbackQty,
     price: order.average ?? order.price ?? fallbackPrice,

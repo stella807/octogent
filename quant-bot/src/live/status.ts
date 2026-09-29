@@ -7,23 +7,32 @@ export function paperAccountPath(statePath: string): string {
   return join(dirname(statePath), 'paper-account.json');
 }
 
+export interface PositionStatus {
+  readonly symbol: string;
+  readonly qty: number;
+  readonly entryPrice: number | null;
+  readonly stopPrice: number | null;
+  /** Null when the current price could not be fetched. */
+  readonly price: number | null;
+  readonly value: number | null;
+  readonly unrealized: number | null;
+}
+
 export interface PaperStatus {
   readonly startingCash: number;
   readonly cash: number;
-  readonly qty: number;
-  /** Null when the current price could not be fetched; equity is then cash-only. */
-  readonly price: number | null;
+  /** Cash plus every position that could be priced. */
   readonly equity: number;
+  /** True when some position could not be priced, so equity understates. */
+  readonly partial: boolean;
   readonly pnl: number;
   readonly pnlPct: number;
   readonly buys: number;
   readonly sells: number;
   readonly feesPaid: number;
-  readonly open: {
-    readonly entryPrice: number;
-    readonly stopPrice: number | null;
-    readonly unrealized: number | null;
-  } | null;
+  readonly positions: readonly PositionStatus[];
+  /** Realized profit/loss per symbol from completed buy→sell round trips. */
+  readonly realizedBySymbol: Readonly<Record<string, number>>;
   readonly killed: boolean;
   readonly killReason: string | null;
 }
@@ -31,57 +40,92 @@ export interface PaperStatus {
 export function paperStatus(
   account: PaperAccount,
   state: RunnerState,
-  price: number | null,
+  prices: Readonly<Record<string, number | null>>,
 ): PaperStatus {
-  const holding = account.qty > 0;
-  const equity = account.cash + (holding && price !== null ? account.qty * price : 0);
+  const positions: PositionStatus[] = Object.entries(account.holdings)
+    .filter(([, qty]) => qty > 0)
+    .map(([symbol, qty]) => {
+      const price = prices[symbol] ?? null;
+      const entryPrice = state.symbols[symbol]?.entryPrice ?? null;
+      return {
+        symbol,
+        qty,
+        entryPrice,
+        stopPrice: state.symbols[symbol]?.stopPrice ?? null,
+        price,
+        value: price !== null ? qty * price : null,
+        unrealized: price !== null && entryPrice !== null ? qty * (price - entryPrice) : null,
+      };
+    });
+  const equity = account.cash + positions.reduce((sum, p) => sum + (p.value ?? 0), 0);
   const pnl = equity - account.startingCash;
   return {
     startingCash: account.startingCash,
     cash: account.cash,
-    qty: account.qty,
-    price,
     equity,
+    partial: positions.some((p) => p.value === null),
     pnl,
     pnlPct: account.startingCash > 0 ? (pnl / account.startingCash) * 100 : 0,
     buys: account.fills.filter((f) => f.side === 'buy').length,
     sells: account.fills.filter((f) => f.side === 'sell').length,
     feesPaid: account.fills.reduce((sum, f) => sum + f.fee, 0),
-    open: holding && state.entryPrice !== null
-      ? {
-        entryPrice: state.entryPrice,
-        stopPrice: state.stopPrice,
-        unrealized: price !== null ? account.qty * (price - state.entryPrice) : null,
-      }
-      : null,
+    positions,
+    realizedBySymbol: realizedBySymbol(account),
     killed: state.killed,
     killReason: state.killReason,
   };
 }
 
-export function formatPaperStatus(s: PaperStatus, symbol: string): string {
+/** Cash out minus cash in per symbol, counting only fully closed round trips. */
+function realizedBySymbol(account: PaperAccount): Record<string, number> {
+  const out: Record<string, number> = {};
+  const open: Record<string, { qty: number; cost: number }> = {};
+  for (const f of account.fills) {
+    const lot = (open[f.symbol] ??= { qty: 0, cost: 0 });
+    if (f.side === 'buy') {
+      lot.qty += f.qty;
+      lot.cost += f.qty * f.price + f.fee;
+      continue;
+    }
+    const share = lot.qty > 0 ? Math.min(1, f.qty / lot.qty) : 1;
+    const basis = lot.cost * share;
+    out[f.symbol] = (out[f.symbol] ?? 0) + f.qty * f.price - f.fee - basis;
+    lot.qty -= f.qty;
+    lot.cost -= basis;
+  }
+  return out;
+}
+
+export function formatPaperStatus(s: PaperStatus): string {
   const money = (v: number): string => `${v < 0 ? '-' : ''}$${Math.abs(v).toFixed(2)}`;
   const signed = (v: number): string => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`;
   const lines = [
-    `PAPER ACCOUNT  ${symbol}  (simulated — no real money)`,
+    'PAPER ACCOUNT  (simulated — no real money)',
     '================================================================',
     `  Starting cash                ${money(s.startingCash)}`,
-    `  Equity now                   ${money(s.equity)}${s.price === null && s.qty > 0 ? '  (price unavailable; position not marked)' : ''}`,
+    `  Cash now                     ${money(s.cash)}`,
+    `  Equity now                   ${money(s.equity)}${s.partial ? '  (some positions unpriced; not included)' : ''}`,
     `  Profit / loss                ${signed(s.pnl)}  (${s.pnlPct >= 0 ? '+' : ''}${s.pnlPct.toFixed(2)}%)`,
     `  Fills                        ${s.buys} buys, ${s.sells} sells, ${money(s.feesPaid)} in fees`,
   ];
-  if (s.open) {
+
+  lines.push('', s.positions.length > 0 ? `OPEN POSITIONS (${s.positions.length})` : 'No open positions.');
+  for (const p of s.positions) {
     lines.push(
-      '',
-      'OPEN POSITION',
-      `  Holding                      ${s.qty.toFixed(8)}`,
-      `  Entry                        ${money(s.open.entryPrice)}`,
-      `  Price now                    ${s.price !== null ? money(s.price) : 'unavailable'}`,
-      `  Stop                         ${s.open.stopPrice !== null ? money(s.open.stopPrice) : 'none'}`,
-      `  Unrealized                   ${s.open.unrealized !== null ? signed(s.open.unrealized) : 'unavailable'}`,
+      `  ${p.symbol.padEnd(12)} ${p.qty.toFixed(8)}` +
+      `  entry ${p.entryPrice !== null ? money(p.entryPrice) : '?'}` +
+      `  now ${p.price !== null ? money(p.price) : 'unavailable'}` +
+      `  stop ${p.stopPrice !== null ? money(p.stopPrice) : 'none'}` +
+      `  unrealized ${p.unrealized !== null ? signed(p.unrealized) : 'unavailable'}`,
     );
-  } else {
-    lines.push('', 'No open position.');
+  }
+
+  const closed = Object.entries(s.realizedBySymbol);
+  if (closed.length > 0) {
+    lines.push('', 'CLOSED TRADES, BY SYMBOL');
+    for (const [symbol, pnl] of closed.sort((a, b) => b[1] - a[1])) {
+      lines.push(`  ${symbol.padEnd(12)} ${signed(pnl)}`);
+    }
   }
   if (s.killed) {
     lines.push('', `KILL SWITCH ACTIVE: ${s.killReason ?? 'unknown'}. Trading halted until the state file is cleared.`);

@@ -196,8 +196,36 @@ node --experimental-strip-types src/cli.ts compare \
 | `portfolio` | A multi-asset strategy against an equal-weight benchmark |
 | `blend` | Several strategies at once, each on its own slice of capital |
 | `search` | Thousands of parameter combinations, train vs. held-out test |
-| `paper` | Live market data, simulated fills, no real money |
+| `screen` | Walk-forward tests a strategy on every market an exchange lists, and keeps only what passes |
+| `paper` | Live market data, simulated fills, no real money. One symbol or many on one account |
+| `status` | The paper account: equity, profit/loss, every open position, closed trades by symbol |
 | `live` | Real orders. Two independent gates stand in front of it. |
+
+### Trading everything that passes, on one account
+
+```bash
+pnpm cli screen --exchange coinbase --strategy donchian-breakout --bars 2000 --equity 25
+pnpm cli paper  --exchange coinbase --strategy donchian-breakout --symbols screened --timeframe 1d --equity 25
+pnpm cli status --exchange coinbase
+```
+
+`screen` lists every USD market on the exchange (stablecoin pairs excluded),
+walk-forward tests the strategy on each, and passes only markets that clear
+all three bars on data their parameters never saw: efficiency of at least
+0.5, a positive out-of-sample return, and at least 10 out-of-sample trades.
+The passes are saved next to the runner state, and `--symbols screened`
+trades exactly that list — nothing added by hand.
+
+Every symbol shares one account. Each entry is sized off the whole
+account's equity and capped by the cash actually free, which is what keeps
+orders above the exchange minimum on a small account; splitting $25 into
+per-coin slices would put most orders under it. There is one kill switch,
+on total equity, so a crash in one market halts trading in all of them. An
+order the exchange refuses (too small, not enough cash) is recorded and not
+retried every poll, and one market failing to load does not stop the rest.
+
+Screening hundreds of markets and keeping the winners lets some through on
+luck; the report says so. A pass is permission to paper trade, not proof.
 
 `--help` lists every flag.
 
@@ -326,13 +354,13 @@ resumes the same account instead of silently re-funding it. To see where it
 stands:
 
 ```bash
-pnpm cli status --exchange coinbase --symbol BTC/USD
+pnpm cli status --exchange coinbase
 ```
 
-That prints equity, profit/loss since the start, fees paid, and any open
-position marked to the current price. Use the same `--exchange`, `--symbol`
-and `--state` as the `paper` run. To start over from scratch, delete both
-`runner-state.json` and `paper-account.json`.
+That prints equity, profit/loss since the start, fees paid, every open
+position marked to its current price, and closed trades by symbol. Use the
+same `--exchange` and `--state` as the `paper` run. To start over from
+scratch, delete both `runner-state.json` and `paper-account.json`.
 
 The image runs as an unprivileged user and contains no credentials. Live
 trading still requires `--live` and `QUANT_BOT_LIVE_CONFIRM`, neither of which

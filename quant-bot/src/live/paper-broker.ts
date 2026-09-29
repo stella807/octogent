@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Candle, Timeframe } from '../domain/types.ts';
 import { buyFillPrice, DEFAULT_COSTS, feeOn, sellFillPrice, type CostModel } from '../backtest/costs.ts';
-import type { Balance, Broker, Fill } from './broker.ts';
+import { OrderRejectedError, type Balance, type Broker, type Fill } from './broker.ts';
 
 export interface PaperBrokerOptions {
   readonly startingCash: number;
@@ -21,7 +21,8 @@ export interface PaperBrokerOptions {
 export interface PaperAccount {
   readonly startingCash: number;
   readonly cash: number;
-  readonly qty: number;
+  /** Base-currency quantity held, per symbol. */
+  readonly holdings: Readonly<Record<string, number>>;
   readonly fills: readonly Fill[];
 }
 
@@ -41,7 +42,7 @@ export class PaperBroker implements Broker {
 
   #startingCash: number;
   #cash: number;
-  #qty = 0;
+  readonly #holdings = new Map<string, number>();
   readonly #costs: CostModel;
   readonly #feed: PaperBrokerOptions['feed'];
   readonly #accountPath: string | undefined;
@@ -55,9 +56,9 @@ export class PaperBroker implements Broker {
     this.#accountPath = options.accountPath;
   }
 
-  async balance(_symbol?: string): Promise<Balance> {
+  async balance(symbol: string): Promise<Balance> {
     await this.#load();
-    return { cash: this.#cash, qty: this.#qty };
+    return { cash: this.#cash, qty: this.#holdings.get(symbol) ?? 0 };
   }
 
   async lastPrice(symbol: string): Promise<number> {
@@ -73,26 +74,41 @@ export class PaperBroker implements Broker {
 
   async marketBuy(symbol: string, quoteAmount: number): Promise<Fill> {
     await this.#load();
-    const price = buyFillPrice(await this.lastPrice(symbol), this.#costs);
     const spend = Math.min(quoteAmount, this.#cash);
+    // The same minimum the backtester enforces. A paper broker that fills
+    // orders the exchange would refuse makes small-account paper results
+    // look better than anything that could happen live.
+    if (spend < this.#costs.minOrderNotional) {
+      throw new OrderRejectedError(
+        `$${spend.toFixed(2)} is below the $${this.#costs.minOrderNotional} minimum order`,
+      );
+    }
+    const price = buyFillPrice(await this.lastPrice(symbol), this.#costs);
     const fee = feeOn(spend, this.#costs);
     const qty = (spend - fee) / price;
-    if (qty <= 0) throw new Error(`insufficient cash to buy ${symbol}: have ${this.#cash}`);
     this.#cash -= spend;
-    this.#qty += qty;
-    return this.#record({ side: 'buy', qty, price, fee, time: Date.now() });
+    this.#holdings.set(symbol, (this.#holdings.get(symbol) ?? 0) + qty);
+    return this.#record({ symbol, side: 'buy', qty, price, fee, time: Date.now() });
   }
 
   async marketSell(symbol: string, qty: number): Promise<Fill> {
     await this.#load();
-    const sellQty = Math.min(qty, this.#qty);
-    if (sellQty <= 0) throw new Error(`no ${symbol} position to sell`);
+    const held = this.#holdings.get(symbol) ?? 0;
+    const sellQty = Math.min(qty, held);
+    if (sellQty <= 0) throw new OrderRejectedError(`no ${symbol} position to sell`);
     const price = sellFillPrice(await this.lastPrice(symbol), this.#costs);
     const notional = sellQty * price;
+    if (notional < this.#costs.minOrderNotional) {
+      throw new OrderRejectedError(
+        `$${notional.toFixed(2)} of ${symbol} is below the $${this.#costs.minOrderNotional} minimum order`,
+      );
+    }
     const fee = feeOn(notional, this.#costs);
-    this.#qty -= sellQty;
+    const remaining = held - sellQty;
+    if (remaining > 1e-12) this.#holdings.set(symbol, remaining);
+    else this.#holdings.delete(symbol);
     this.#cash += notional - fee;
-    return this.#record({ side: 'sell', qty: sellQty, price, fee, time: Date.now() });
+    return this.#record({ symbol, side: 'sell', qty: sellQty, price, fee, time: Date.now() });
   }
 
   async #record(fill: Fill): Promise<Fill> {
@@ -114,7 +130,7 @@ export class PaperBroker implements Broker {
       // re-fund it, or restarts would turn every loss back into fresh cash.
       this.#startingCash = account.startingCash;
       this.#cash = account.cash;
-      this.#qty = account.qty;
+      for (const [symbol, qty] of Object.entries(account.holdings)) this.#holdings.set(symbol, qty);
       this.fills.push(...account.fills);
     })();
     return this.#loaded;
@@ -125,7 +141,7 @@ export class PaperBroker implements Broker {
     const account: PaperAccount = {
       startingCash: this.#startingCash,
       cash: this.#cash,
-      qty: this.#qty,
+      holdings: Object.fromEntries(this.#holdings),
       fills: this.fills,
     };
     await mkdir(dirname(this.#accountPath), { recursive: true });
@@ -140,11 +156,11 @@ export class PaperBroker implements Broker {
 export async function readPaperAccount(path: string): Promise<PaperAccount | null> {
   try {
     const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<PaperAccount>;
-    if (typeof parsed.cash !== 'number' || typeof parsed.qty !== 'number') return null;
+    if (typeof parsed.cash !== 'number') return null;
     return {
       startingCash: parsed.startingCash ?? parsed.cash,
       cash: parsed.cash,
-      qty: parsed.qty,
+      holdings: parsed.holdings ?? {},
       fills: parsed.fills ?? [],
     };
   } catch {

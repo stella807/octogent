@@ -7,7 +7,7 @@ import { computeMetrics } from './backtest/metrics.ts';
 import { DEFAULT_MC_OPTIONS, monteCarlo } from './backtest/monte-carlo.ts';
 import { DEFAULT_WF_OPTIONS, walkForward, type Objective } from './backtest/walk-forward.ts';
 import { loadCsv } from './data/csv.ts';
-import { fetchCandles } from './data/exchange.ts';
+import { fetchCandles, listMarkets } from './data/exchange.ts';
 import { barsForRange, clipToRange, parseRange, type DateRange } from './data/range.ts';
 import { generateCandles } from './data/synthetic.ts';
 import { BENCHMARK_LIMITS, CONSERVATIVE_LIMITS, DEFAULT_LIMITS, type RiskLimits } from './risk/risk-manager.ts';
@@ -17,6 +17,8 @@ import type { Params } from './strategy/types.ts';
 import { PaperBroker, readPaperAccount } from './live/paper-broker.ts';
 import { StateStore } from './live/state-store.ts';
 import { formatPaperStatus, paperAccountPath, paperStatus } from './live/status.ts';
+import { DEFAULT_SCREEN, failed as failedScreen, screenSymbol, type ScreenCriteria, type ScreenRow } from './backtest/screen.ts';
+import { formatScreen, readScreenFile, screenPath, writeScreenFile } from './screen-file.ts';
 import { ExchangeBroker, LIVE_CONFIRM_ENV, LIVE_CONFIRM_VALUE } from './live/exchange-broker.ts';
 import { LiveRunner } from './live/runner.ts';
 import { TelegramNotifier } from './live/notifier.ts';
@@ -39,7 +41,8 @@ quant-bot — crypto strategy research and paper trading
   walkforward  Pick parameters out-of-sample and report what survived
   montecarlo   Resample trade order to show the real spread of outcomes
   paper        Trade live market data with simulated fills (no real money)
-  status       Paper account profit/loss and open position (same --exchange/--symbol/--state as paper)
+  status       Paper account profit/loss and every open position
+  screen       Walk-forward test a strategy on every --quote market of an exchange; keep what passes
   live         Trade real funds. Requires --live and ${LIVE_CONFIRM_ENV}=${LIVE_CONFIRM_VALUE}
 
 Data (pick one; defaults to --synthetic so it runs with no network)
@@ -53,7 +56,11 @@ Data (pick one; defaults to --synthetic so it runs with no network)
 Common
   --strategy NAME        ${Object.keys(STRATEGIES).join(' | ')}
                          portfolio: ${Object.keys(PORTFOLIO_STRATEGIES).join(' | ')}
-  --symbols A,B,C        Universe for the portfolio command
+  --symbols A,B,C        Several symbols: portfolio universe, screen universe, or
+                         paper/live on one shared account. "screened" = last screen's passes
+  --quote USD            screen: which markets to test when --symbols is not given
+  --min-trades 10        screen: out-of-sample trades a pass needs
+  --min-efficiency 0.5   screen: walk-forward efficiency a pass needs
   --strategies A,B       Strategies to run at once, for the blend command
   --weights 0.5,0.5       Capital split for blend (default: equal)
   --timeframe 1d         1m 5m 15m 1h 4h 1d
@@ -83,7 +90,10 @@ export async function main(argv: readonly string[]): Promise<number> {
     options: {
       strategy: { type: 'string', default: 'donchian-breakout' },
       symbol: { type: 'string', default: 'BTC/USDT' },
-      symbols: { type: 'string', default: 'BTC/USD,ETH/USD,SOL/USD,LTC/USD,LINK/USD,AVAX/USD' },
+      symbols: { type: 'string' },
+      quote: { type: 'string', default: 'USD' },
+      'min-trades': { type: 'string', default: String(DEFAULT_SCREEN.minTrades) },
+      'min-efficiency': { type: 'string', default: String(DEFAULT_SCREEN.minEfficiency) },
       strategies: { type: 'string' },
       weights: { type: 'string' },
       exchange: { type: 'string', default: 'binance' },
@@ -200,7 +210,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     }
 
     case 'portfolio': {
-      const universe = (values.symbols as string).split(',').map((s) => s.trim()).filter(Boolean);
+      const universe = splitSymbols(values.symbols as string | undefined ?? DEFAULT_PORTFOLIO_UNIVERSE);
       if (universe.length < 2) {
         throw new Error('--symbols needs at least two symbols for a portfolio');
       }
@@ -362,19 +372,62 @@ export async function main(argv: readonly string[]): Promise<number> {
         return 1;
       }
       const state = await new StateStore(statePath).load();
-      const symbol = values.symbol as string;
-      let price: number | null = null;
-      try {
-        const recent = await fetchCandles({
-          exchange: values.exchange as string, symbol, timeframe: '1m', bars: 2, cacheDir: 'data/cache', noCache: true,
-        });
-        price = recent[recent.length - 1]?.close ?? null;
-      } catch {
-        // Offline still reports cash-based P&L; the report says the position is unmarked.
+      const prices: Record<string, number | null> = {};
+      for (const [symbol, qty] of Object.entries(account.holdings)) {
+        if (qty <= 0) continue;
+        try {
+          const recent = await fetchCandles({
+            exchange: values.exchange as string, symbol, timeframe: '1m', bars: 2, cacheDir: 'data/cache', noCache: true,
+          });
+          prices[symbol] = recent[recent.length - 1]?.close ?? null;
+        } catch {
+          // Unpriced positions are reported as such rather than guessed at.
+          prices[symbol] = null;
+        }
       }
-      const summary = paperStatus(account, state, price);
+      const summary = paperStatus(account, state, prices);
       if (values.json) emit(summary);
-      else process.stdout.write(`${formatPaperStatus(summary, symbol)}\n`);
+      else process.stdout.write(`${formatPaperStatus(summary)}\n`);
+      return 0;
+    }
+
+    case 'screen': {
+      const factory = getStrategy(values.strategy as string);
+      const exchange = values.exchange as string;
+      const universe = values.symbols
+        ? splitSymbols(values.symbols as string)
+        : await listMarkets(exchange, values.quote as string);
+      const criteria: ScreenCriteria = {
+        minEfficiency: num(values['min-efficiency'], 'min-efficiency'),
+        minTrades: Math.trunc(num(values['min-trades'], 'min-trades')),
+      };
+      const wfOptions = {
+        ...DEFAULT_WF_OPTIONS,
+        folds: Math.trunc(num(values.folds, 'folds')),
+        objective: values.objective as Objective,
+        config,
+      };
+      const rows: ScreenRow[] = [];
+      for (const [i, symbol] of universe.entries()) {
+        process.stderr.write(`[${i + 1}/${universe.length}] ${symbol}\n`);
+        let candles: Candle[];
+        try {
+          candles = await loadCandles({
+            csv: undefined, synthetic: values.synthetic as boolean, symbol, exchange, timeframe, bars, range,
+            seed: Math.trunc(num(values.seed, 'seed')) + i,
+          });
+        } catch (error) {
+          rows.push(failedScreen(symbol, 0, `no data: ${error instanceof Error ? error.message : String(error)}`));
+          continue;
+        }
+        rows.push(screenSymbol(symbol, candles, factory, wfOptions, criteria));
+      }
+      const passed = rows.filter((r) => r.passed).map((r) => r.symbol);
+      await writeScreenFile(screenPath(values.state as string), {
+        exchange, strategy: factory.name, timeframe, screenedAt: new Date().toISOString(), symbols: passed, rows,
+      });
+      if (values.json) emit(rows);
+      else process.stdout.write(`${formatScreen(rows, factory.name, exchange)}\n`);
       return 0;
     }
 
@@ -382,8 +435,8 @@ export async function main(argv: readonly string[]): Promise<number> {
     case 'live': {
       const factory = getStrategy(values.strategy as string);
       const params = { ...factory.defaults, ...overrides };
-      const symbol = values.symbol as string;
       const exchange = values.exchange as string;
+      const symbols = await resolveTradeSymbols(values, factory.name, exchange);
 
       const broker = command === 'live'
         ? liveBroker(values.live as boolean, exchange)
@@ -400,7 +453,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         broker,
         factory,
         params,
-        symbol,
+        symbols,
         timeframe,
         limits,
         statePath: values.state as string,
@@ -535,6 +588,38 @@ async function loadContext(
   if (!SENTIMENT_STRATEGIES.has(strategyName)) return undefined;
   const sentiment = await fetchSentiment();
   return { sentiment: alignSentiment(candles, sentiment) };
+}
+
+
+const DEFAULT_PORTFOLIO_UNIVERSE = 'BTC/USD,ETH/USD,SOL/USD,LTC/USD,LINK/USD,AVAX/USD';
+
+function splitSymbols(list: string): string[] {
+  return list.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * `--symbols screened` trades exactly what the last `screen` passed — the
+ * "everything that is profitable" universe — and refuses if that screen was
+ * for a different strategy or exchange, since its passes would mean nothing.
+ */
+async function resolveTradeSymbols(
+  values: Record<string, unknown>,
+  strategy: string,
+  exchange: string,
+): Promise<string[]> {
+  const list = values['symbols'] as string | undefined;
+  if (list === undefined) return [values['symbol'] as string];
+  if (list !== 'screened') return splitSymbols(list);
+  const path = screenPath(values['state'] as string);
+  const screen = await readScreenFile(path);
+  if (!screen) throw new Error(`no screen results at ${path}; run \`screen\` first`);
+  if (screen.strategy !== strategy || screen.exchange !== exchange) {
+    throw new Error(
+      `the last screen was ${screen.strategy} on ${screen.exchange}, not ${strategy} on ${exchange}; re-run screen`,
+    );
+  }
+  if (screen.symbols.length === 0) throw new Error('the last screen passed no symbols; nothing to trade');
+  return [...screen.symbols];
 }
 
 const isEntry = process.argv[1] !== undefined

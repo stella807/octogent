@@ -1,28 +1,45 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-export interface RunnerState {
-  /** Open time of the last bar the runner acted on, so a restart cannot re-trade it. */
+/** One symbol's position bookkeeping. */
+export interface SymbolState {
+  /** Open time of the last bar acted on for this symbol, so a restart cannot re-trade it. */
   lastBarTime: number;
   entryPrice: number | null;
   entryTime: number | null;
   stopPrice: number | null;
   highWaterPrice: number | null;
-  peakEquity: number;
-  /** Once true, the bot refuses to trade until a human clears the state file. */
-  killed: boolean;
-  killReason: string | null;
 }
 
-export const EMPTY_STATE: RunnerState = {
+/**
+ * Account-level fields live at the top: there is one kill switch and one
+ * equity peak no matter how many symbols share the account, because a
+ * drawdown is a property of the money, not of any one market.
+ */
+export interface RunnerState {
+  peakEquity: number;
+  /** Once true, the bot refuses to trade any symbol until a human clears the state file. */
+  killed: boolean;
+  killReason: string | null;
+  /** Newest bar time the account-level risk check has already run for. */
+  lastRiskBarTime: number;
+  symbols: Record<string, SymbolState>;
+}
+
+export const EMPTY_SYMBOL_STATE: SymbolState = {
   lastBarTime: 0,
   entryPrice: null,
   entryTime: null,
   stopPrice: null,
   highWaterPrice: null,
+};
+
+export const EMPTY_STATE: RunnerState = {
   peakEquity: 0,
   killed: false,
   killReason: null,
+  lastRiskBarTime: 0,
+  symbols: {},
 };
 
 /**
@@ -42,9 +59,10 @@ export class StateStore {
   async load(): Promise<RunnerState> {
     try {
       const parsed: unknown = JSON.parse(await readFile(this.#path, 'utf8'));
-      return { ...EMPTY_STATE, ...(parsed as Partial<RunnerState>) };
+      const loaded = { ...EMPTY_STATE, ...(parsed as Partial<RunnerState>) };
+      return { ...loaded, symbols: { ...loaded.symbols } };
     } catch {
-      return { ...EMPTY_STATE };
+      return { ...EMPTY_STATE, symbols: {} };
     }
   }
 

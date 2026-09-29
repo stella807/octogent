@@ -8,11 +8,22 @@ export interface Balance {
 }
 
 export interface Fill {
+  readonly symbol: string;
   readonly side: 'buy' | 'sell';
   readonly qty: number;
   readonly price: number;
   readonly fee: number;
   readonly time: number;
+}
+
+/**
+ * An order the venue refused outright — below its minimum size, or more than
+ * the account can pay for. Retrying the same order on the next poll would be
+ * refused the same way, so the runner records it and moves on rather than
+ * treating it like a transient network error.
+ */
+export class OrderRejectedError extends Error {
+  override readonly name = 'OrderRejectedError';
 }
 
 /**

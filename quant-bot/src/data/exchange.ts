@@ -59,14 +59,7 @@ export async function fetchCandles(
 }
 
 async function downloadCandles(options: FetchOptions): Promise<Candle[]> {
-  const ccxt = await importCcxt();
-  const ExchangeClass = (ccxt as Record<string, unknown>)[options.exchange];
-  if (typeof ExchangeClass !== 'function') {
-    throw new Error(`ccxt has no exchange named "${options.exchange}"`);
-  }
-  const client = new (ExchangeClass as new (cfg: unknown) => CcxtExchange)({
-    enableRateLimit: true,
-  });
+  const client = await connect(options.exchange);
 
   const barMs = TIMEFRAME_MS[options.timeframe];
   const since = options.since ?? Date.now() - options.bars * barMs;
@@ -120,7 +113,42 @@ async function downloadCandles(options: FetchOptions): Promise<Candle[]> {
   return candles.filter((c) => c.time >= since && c.time <= cutoff).slice(0, options.bars);
 }
 
+interface CcxtMarket {
+  readonly symbol: string;
+  readonly base: string;
+  readonly quote: string;
+  readonly spot?: boolean;
+  readonly active?: boolean | null;
+}
+
+/** Stablecoin-vs-dollar pairs barely move; trend strategies have nothing to find there. */
+const STABLECOINS = new Set(['USDC', 'USDT', 'DAI', 'PYUSD', 'EURC', 'GUSD', 'USDS', 'FDUSD', 'TUSD', 'USDP', 'PAX']);
+
+/**
+ * Every tradable spot market on `exchange` quoted in `quote`, e.g. all
+ * Coinbase USD pairs. Public endpoint; no API key involved.
+ */
+export async function listMarkets(exchange: string, quote: string): Promise<string[]> {
+  const client = await connect(exchange);
+  if (!client.loadMarkets) throw new Error(`ccxt ${exchange} cannot list markets`);
+  const markets = await client.loadMarkets();
+  return Object.values(markets)
+    .filter((m) => m.spot !== false && m.active !== false && m.quote === quote && !STABLECOINS.has(m.base))
+    .map((m) => m.symbol)
+    .sort();
+}
+
+async function connect(exchange: string): Promise<CcxtExchange> {
+  const ccxt = await importCcxt();
+  const ExchangeClass = (ccxt as Record<string, unknown>)[exchange];
+  if (typeof ExchangeClass !== 'function') {
+    throw new Error(`ccxt has no exchange named "${exchange}"`);
+  }
+  return new (ExchangeClass as new (cfg: unknown) => CcxtExchange)({ enableRateLimit: true });
+}
+
 interface CcxtExchange {
+  loadMarkets?(): Promise<Record<string, CcxtMarket>>;
   fetchOHLCV(
     symbol: string,
     timeframe: string,
