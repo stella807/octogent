@@ -182,11 +182,16 @@ export class LiveRunner {
       `runner started: ${this.#options.symbol} ${this.#options.timeframe} on ${this.#options.broker.id}` +
       (this.#options.broker.isLive ? '  *** LIVE FUNDS ***' : '  (paper — no real money)'),
     );
+    // A halted or warming-up runner reports the same status on every poll;
+    // repeating it every few minutes buries the lines that actually matter.
+    let lastStatus = '';
     while (!signal?.aborted) {
       try {
         const result = await this.step();
-        if (result.action !== 'already-processed' && result.action !== 'hold') {
-          this.#options.log(`[${new Date(result.barTime).toISOString()}] ${result.action}: ${result.detail}`);
+        const status = `${result.action}: ${result.detail}`;
+        if (result.action !== 'already-processed' && result.action !== 'hold' && status !== lastStatus) {
+          this.#options.log(`[${new Date(result.barTime).toISOString()}] ${status}`);
+          lastStatus = status;
         }
       } catch (error) {
         // A transient exchange error must not kill the process and leave a

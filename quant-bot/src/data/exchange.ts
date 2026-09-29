@@ -42,11 +42,12 @@ export const DEFAULT_FETCH: Omit<FetchOptions, 'symbol'> = {
 export async function fetchCandles(
   options: FetchOptions,
   download: (options: FetchOptions) => Promise<Candle[]> = downloadCandles,
+  now: number = Date.now(),
 ): Promise<Candle[]> {
   const cachePath = cacheFile(options);
   if (!options.noCache) {
     const cached = await readCache(cachePath);
-    if (cached) return cached;
+    if (cached && !isStale(cached, options, now)) return cached;
   }
 
   const candles = await download(options);
@@ -150,6 +151,19 @@ function cacheFile(options: FetchOptions): string {
     options.cacheDir,
     `${options.exchange}-${safeSymbol}-${options.timeframe}-${range}.json`,
   );
+}
+
+/**
+ * An explicit range is a pinned, reproducible window and never goes stale.
+ * "The latest N bars" does: once a newer bar has closed, serving the cached
+ * copy silently reports results that are days or weeks old as current.
+ */
+function isStale(cached: readonly Candle[], options: FetchOptions, now: number): boolean {
+  if (options.until !== undefined || options.since !== undefined) return false;
+  const newest = cached[cached.length - 1];
+  if (!newest) return true;
+  // The most recent closed bar opened no earlier than two intervals ago.
+  return newest.time < now - 2 * TIMEFRAME_MS[options.timeframe];
 }
 
 async function readCache(path: string): Promise<Candle[] | null> {

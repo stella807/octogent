@@ -83,17 +83,41 @@ describe('fetchCandles caching', () => {
     };
   }
 
-  it('reuses the on-disk cache by default, so a backtest snapshot stays reproducible', async () => {
-    const first = fakeDownload([{ time: 1, open: 1, high: 1, low: 1, close: 1, volume: 1 }]);
-    await fetchCandles({ ...baseOptions, cacheDir }, first.download);
+  const HOUR = 3_600_000;
+  const NOW = 1_000 * HOUR;
+  const candleAt = (time: number): Candle => ({ time, open: 1, high: 1, low: 1, close: 1, volume: 1 });
+
+  it('reuses a cache that already holds the latest closed bar', async () => {
+    const first = fakeDownload([candleAt(NOW - HOUR)]);
+    await fetchCandles({ ...baseOptions, cacheDir }, first.download, NOW);
     expect(first.calls()).toBe(1);
 
     // A second call with a *different* downloader must still return the cached
     // result and never invoke this one, proving the cache was actually hit.
-    const second = fakeDownload([{ time: 2, open: 2, high: 2, low: 2, close: 2, volume: 2 }]);
-    const result = await fetchCandles({ ...baseOptions, cacheDir }, second.download);
+    const second = fakeDownload([candleAt(NOW)]);
+    const result = await fetchCandles({ ...baseOptions, cacheDir }, second.download, NOW);
     expect(second.calls()).toBe(0);
-    expect(result[0]?.time).toBe(1);
+    expect(result[0]?.time).toBe(NOW - HOUR);
+  });
+
+  it('refreshes "latest N bars" once a newer bar has closed since it was cached', async () => {
+    await fetchCandles({ ...baseOptions, cacheDir }, fakeDownload([candleAt(NOW - HOUR)]).download, NOW);
+
+    const later = NOW + 5 * HOUR;
+    const fresh = fakeDownload([candleAt(later - HOUR)]);
+    const result = await fetchCandles({ ...baseOptions, cacheDir }, fresh.download, later);
+    expect(fresh.calls()).toBe(1);
+    expect(result[0]?.time).toBe(later - HOUR);
+  });
+
+  it('never refreshes an explicit date range, so pinned results stay reproducible', async () => {
+    const pinned = { ...baseOptions, cacheDir, since: 0, until: 10 * HOUR };
+    await fetchCandles(pinned, fakeDownload([candleAt(HOUR)]).download, NOW);
+
+    const second = fakeDownload([candleAt(2 * HOUR)]);
+    const result = await fetchCandles(pinned, second.download, NOW + 1_000 * HOUR);
+    expect(second.calls()).toBe(0);
+    expect(result[0]?.time).toBe(HOUR);
   });
 
   it('bypasses the cache with noCache: true, so a live poll always sees fresh data', async () => {
