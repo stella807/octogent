@@ -229,6 +229,66 @@ export type ShipmentEvent = {
   createdAt: string;
 };
 
+export const ROUTE_STATUSES = ["open", "closed", "cancelled"] as const;
+export type RouteStatus = (typeof ROUTE_STATUSES)[number];
+
+export const BOOKING_STATUSES = ["booked", "cancelled"] as const;
+export type BookingStatus = (typeof BOOKING_STATUSES)[number];
+
+/**
+ * Capacity a supplier is selling on a dated departure.
+ *
+ * This is the other half of the marketplace: instead of a shipper posting a
+ * load and waiting for bids, a supplier publishes the space it already has and
+ * a shipper buys it at the published price.
+ */
+export type Route = {
+  id: string;
+  reference: string;
+  supplierCompanyId: string;
+  origin: Place;
+  destination: Place;
+  equipment: EquipmentType;
+  departsOn: string;
+  arrivesBy: string;
+  /** Last date a booking can be made; never after departure. */
+  bookingCutoff: string;
+  capacityPallets: number;
+  capacityWeightLbs: number;
+  pricePerPalletCents: number;
+  /** Floor for a small booking, so one pallet is not sold below cost. */
+  minimumChargeCents: number;
+  cargoTypes: CargoType[];
+  capabilities: SpecialRequirement[];
+  notes: string;
+  status: RouteStatus;
+  createdAt: string;
+};
+
+export type Booking = {
+  id: string;
+  reference: string;
+  routeId: string;
+  shipperCompanyId: string;
+  /** Every booking creates a shipment, so the rest of the platform tracks it normally. */
+  shipmentId: string;
+  pallets: number;
+  weightLbs: number;
+  cargoType: CargoType;
+  cargoDescription: string;
+  priceCents: number;
+  /**
+   * The commission rate in basis points as it stood when this booking was made,
+   * and the amount it produced. Both are snapshots: changing the platform rate
+   * later must never rewrite what a past booking owed.
+   */
+  commissionBps: number;
+  commissionCents: number;
+  status: BookingStatus;
+  createdAt: string;
+  cancelledAt: string | null;
+};
+
 export type Session = {
   userId: string;
   csrfToken: string;

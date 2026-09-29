@@ -8,10 +8,12 @@
 
 import type { ComparableAward } from "../domain/rates.ts";
 import type {
+  Booking,
   Company,
   Message,
   Quote,
   QuoteOffer,
+  Route,
   Session,
   Shipment,
   ShipmentEvent,
@@ -29,6 +31,8 @@ export type NewShipment = Omit<
   "id" | "reference" | "createdAt" | "closedAt" | "status" | "awardedQuoteId"
 >;
 export type NewQuote = Omit<Quote, "id" | "createdAt" | "updatedAt" | "offers" | "status">;
+export type NewRoute = Omit<Route, "id" | "reference" | "createdAt" | "status">;
+export type NewBooking = Omit<Booking, "id" | "reference" | "createdAt" | "cancelledAt" | "status">;
 
 export type SupplierRecord = {
   company: Company;
@@ -107,6 +111,32 @@ export interface Store {
   listEvents(shipmentId: string): ShipmentEvent[];
   /** Newest first, across shipments. `shipmentIds` of null means every shipment. */
   listRecentEvents(shipmentIds: string[] | null, limit: number): FloorEvent[];
+
+  // Selling capacity
+  createRoute(route: NewRoute): Route;
+  getRoute(id: string): Route | null;
+  listRoutesForSupplier(companyId: string): Route[];
+  listOpenRoutes(): Route[];
+  listAllRoutes(): Route[];
+  setRouteStatus(id: string, status: Route["status"]): Route | null;
+
+  createBooking(booking: NewBooking): Booking;
+  getBooking(id: string): Booking | null;
+  listBookingsForRoute(routeId: string): Booking[];
+  listBookingsForShipper(companyId: string): Booking[];
+  listBookingsForSupplier(companyId: string): Booking[];
+  listAllBookings(): Booking[];
+  setBookingStatus(id: string, status: Booking["status"], at: string | null): Booking | null;
+
+  /** Platform-level configuration, such as the commission rate. */
+  getSetting(key: string): string | null;
+  setSetting(key: string, value: string): void;
+
+  /**
+   * Runs the work in one atomic unit. Nested calls use savepoints, so an
+   * application-level transaction can call store methods that transact too.
+   */
+  transaction<T>(work: () => T): T;
 
   /** Awarded prices used as rate comparables. */
   listComparableAwards(): ComparableAward[];

@@ -5,12 +5,12 @@ export function newId(prefix: string): string {
   return `${prefix}_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
 }
 
-/** Human-facing shipment reference, e.g. "SHP-7Q4KD2". */
-export function newReference(): string {
+/** Human-facing reference, e.g. "SHP-7Q4KD2", "RTE-9XK2M4", "BKG-4P7QLN". */
+export function newReference(prefix = "SHP"): string {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
   const bytes = new Uint8Array(6);
   globalThis.crypto.getRandomValues(bytes);
   for (const byte of bytes) out += alphabet[byte % alphabet.length];
-  return `SHP-${out}`;
+  return `${prefix}-${out}`;
 }

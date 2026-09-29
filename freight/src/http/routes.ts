@@ -12,6 +12,8 @@ import {
   updateSupplierProfile,
 } from "../app/accounts.ts";
 import { listCompanies, platformStats, setVerification } from "../app/admin.ts";
+import { bookRoute, cancelBooking, listBookings } from "../app/bookings.ts";
+import { commissionLedger, setCommissionBps } from "../app/commission.ts";
 import { unauthorized } from "../app/errors.ts";
 import { floorView } from "../app/floor.ts";
 import { laneMapView } from "../app/lanes.ts";
@@ -25,6 +27,7 @@ import {
   listSupplierQuotes,
   submitQuote,
 } from "../app/quotes.ts";
+import { getRouteListing, listRoutes, publishRoute, setRouteStatus } from "../app/routes.ts";
 import {
   getMatches,
   getShipmentView,
@@ -155,6 +158,66 @@ export const routes: Route<Ctx>[] = [
     pattern: "/api/lanes",
     auth: true,
     handler: (context) => laneMapView(context.store, me(context)),
+  },
+
+  {
+    method: "GET",
+    pattern: "/api/routes",
+    auth: true,
+    handler: (context) => listRoutes(context.store, me(context)),
+  },
+  {
+    method: "POST",
+    pattern: "/api/routes",
+    auth: true,
+    handler: (context) => publishRoute(context.store, me(context), context.body),
+  },
+  {
+    method: "GET",
+    pattern: "/api/routes/:id",
+    auth: true,
+    handler: (context) => getRouteListing(context.store, me(context), context.params.id as string),
+  },
+  {
+    method: "POST",
+    pattern: "/api/routes/:id/status",
+    auth: true,
+    handler: (context) =>
+      setRouteStatus(context.store, me(context), context.params.id as string, context.body),
+  },
+  {
+    method: "POST",
+    pattern: "/api/routes/:id/bookings",
+    auth: true,
+    handler: (context) =>
+      bookRoute(context.store, me(context), context.params.id as string, context.body),
+  },
+
+  {
+    method: "GET",
+    pattern: "/api/bookings",
+    auth: true,
+    handler: (context) => listBookings(context.store, me(context)),
+  },
+  {
+    method: "POST",
+    pattern: "/api/bookings/:id/cancel",
+    auth: true,
+    handler: (context) =>
+      cancelBooking(context.store, me(context), context.params.id as string, context.body),
+  },
+
+  {
+    method: "GET",
+    pattern: "/api/commission",
+    auth: true,
+    handler: (context) => commissionLedger(context.store, me(context)),
+  },
+  {
+    method: "PUT",
+    pattern: "/api/admin/commission",
+    auth: true,
+    handler: (context) => setCommissionBps(context.store, me(context), context.body),
   },
 
   {

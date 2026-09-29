@@ -5,6 +5,7 @@ import { ApiError, api } from "./api.js";
 import { clear, el, replace, toast } from "./dom.js";
 import { renderAdmin } from "./views/admin.js";
 import { renderAuth } from "./views/auth.js";
+import { renderCapacity, renderRoute } from "./views/capacity.js";
 import { renderFloor } from "./views/floor.js";
 import { renderLanes } from "./views/lanes.js";
 import { renderShipment } from "./views/shipment.js";
@@ -16,6 +17,13 @@ const state = { user: null, company: null, reference: null };
 const ROUTES = [
   { pattern: /^#\/floor$/, roles: ["shipper", "supplier", "admin"], view: renderFloor },
   { pattern: /^#\/lanes$/, roles: ["shipper", "supplier", "admin"], view: renderLanes },
+  { pattern: /^#\/capacity$/, roles: ["shipper", "supplier"], view: renderCapacity },
+  {
+    pattern: /^#\/capacity\/([^/]+)$/,
+    roles: ["shipper", "supplier"],
+    view: renderRoute,
+    params: ["id"],
+  },
   { pattern: /^#\/shipments\/new$/, roles: ["shipper"], view: renderNewShipment },
   {
     pattern: /^#\/shipments\/([^/]+)$/,
@@ -35,12 +43,14 @@ const NAV = {
     { href: "#/floor", label: "Command floor" },
     { href: "#/shipments", label: "Shipments" },
     { href: "#/lanes", label: "Lane map" },
+    { href: "#/capacity", label: "Buy capacity" },
     { href: "#/shipments/new", label: "Post a shipment" },
   ],
   supplier: [
     { href: "#/floor", label: "Command floor" },
     { href: "#/opportunities", label: "Opportunities" },
     { href: "#/lanes", label: "Lane map" },
+    { href: "#/capacity", label: "Sell capacity" },
     { href: "#/quotes", label: "My quotes" },
     { href: "#/shipments", label: "My shipments" },
     { href: "#/profile", label: "Capabilities" },

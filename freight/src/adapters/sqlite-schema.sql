@@ -151,3 +151,56 @@ CREATE TABLE IF NOT EXISTS shipment_events (
   created_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS shipment_events_shipment ON shipment_events(shipment_id);
+
+CREATE TABLE IF NOT EXISTS routes (
+  id                     TEXT PRIMARY KEY,
+  reference              TEXT NOT NULL UNIQUE,
+  supplier_company_id    TEXT NOT NULL REFERENCES companies(id),
+  origin_city            TEXT NOT NULL,
+  origin_region          TEXT NOT NULL,
+  origin_country         TEXT NOT NULL,
+  dest_city              TEXT NOT NULL,
+  dest_region            TEXT NOT NULL,
+  dest_country           TEXT NOT NULL,
+  equipment              TEXT NOT NULL,
+  departs_on             TEXT NOT NULL,
+  arrives_by             TEXT NOT NULL,
+  booking_cutoff         TEXT NOT NULL,
+  capacity_pallets       INTEGER NOT NULL,
+  capacity_weight_lbs    INTEGER NOT NULL,
+  price_per_pallet_cents INTEGER NOT NULL,
+  minimum_charge_cents   INTEGER NOT NULL DEFAULT 0,
+  cargo_types            TEXT NOT NULL DEFAULT '[]',
+  capabilities           TEXT NOT NULL DEFAULT '[]',
+  notes                  TEXT NOT NULL DEFAULT '',
+  status                 TEXT NOT NULL DEFAULT 'open',
+  created_at             TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS routes_supplier ON routes(supplier_company_id);
+CREATE INDEX IF NOT EXISTS routes_status ON routes(status, departs_on);
+
+CREATE TABLE IF NOT EXISTS bookings (
+  id                 TEXT PRIMARY KEY,
+  reference          TEXT NOT NULL UNIQUE,
+  route_id           TEXT NOT NULL REFERENCES routes(id),
+  shipper_company_id TEXT NOT NULL REFERENCES companies(id),
+  shipment_id        TEXT NOT NULL REFERENCES shipments(id),
+  pallets            INTEGER NOT NULL,
+  weight_lbs         INTEGER NOT NULL,
+  cargo_type         TEXT NOT NULL,
+  cargo_description  TEXT NOT NULL,
+  price_cents        INTEGER NOT NULL,
+  commission_bps     INTEGER NOT NULL,
+  commission_cents   INTEGER NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'booked',
+  created_at         TEXT NOT NULL,
+  cancelled_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS bookings_route ON bookings(route_id);
+CREATE INDEX IF NOT EXISTS bookings_shipper ON bookings(shipper_company_id);
+
+CREATE TABLE IF NOT EXISTS platform_settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);

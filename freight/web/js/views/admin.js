@@ -6,7 +6,11 @@ import { el, formValues, toast } from "../dom.js";
 import { dateTime, titleCase, usd } from "../format.js";
 
 export async function renderAdmin({ refresh }) {
-  const [companies, stats] = await Promise.all([api.adminCompanies(), api.adminStats()]);
+  const [companies, stats, ledger] = await Promise.all([
+    api.adminCompanies(),
+    api.adminStats(),
+    api.get("/api/commission"),
+  ]);
 
   const statCards = el(
     "div",
@@ -44,6 +48,7 @@ export async function renderAdmin({ refresh }) {
     ),
     statCards,
     el("div", { class: "card" }, el("h2", {}, "Shipments by status"), shipmentBreakdown),
+    commissionCard(ledger, refresh),
     el(
       "div",
       { class: "card card--flush" },
@@ -109,6 +114,94 @@ export async function renderAdmin({ refresh }) {
 }
 
 /** The note is part of the decision, so it is typed in the same place the decision is made. */
+/**
+ * The commission the platform records on booked capacity. Changing the rate
+ * only affects future bookings — each stored the rate it was made under.
+ */
+function commissionCard(ledger, refresh) {
+  const form = el(
+    "form",
+    {
+      class: "form-actions",
+      onSubmit: async (event) => {
+        event.preventDefault();
+        const percent = Number(formValues(form).percent);
+        try {
+          await api.put("/api/admin/commission", { rateBps: Math.round(percent * 100) });
+          toast(`Commission set to ${percent}% for new bookings`);
+          refresh();
+        } catch (error) {
+          toast(error instanceof ApiError ? error.message : "Could not set the rate", "error");
+        }
+      },
+    },
+    el("label", { for: "commission-rate" }, "Rate %"),
+    el("input", {
+      id: "commission-rate",
+      name: "percent",
+      type: "number",
+      min: "0",
+      max: "30",
+      step: "0.25",
+      value: (ledger.currentRateBps / 100).toFixed(2),
+    }),
+    el("button", { class: "btn--primary btn--small", type: "submit" }, "Set rate"),
+  );
+
+  const rows = ledger.bySupplier.map((entry) =>
+    el(
+      "tr",
+      {},
+      el("td", {}, entry.name),
+      el("td", { class: "numeric" }, usd(entry.grossCents)),
+      el("td", { class: "numeric" }, usd(entry.commissionCents)),
+    ),
+  );
+
+  return el(
+    "div",
+    { class: "card" },
+    el(
+      "div",
+      { class: "card__head" },
+      el("h2", {}, "Commission"),
+      el("span", { class: "small muted" }, `${ledger.totals.bookings} live booking(s)`),
+    ),
+    el(
+      "div",
+      { class: "grid grid--stats" },
+      stat("Booked value", usd(ledger.totals.grossCents)),
+      stat("Commission recorded", usd(ledger.totals.commissionCents)),
+      stat("Current rate", `${(ledger.currentRateBps / 100).toFixed(2)}%`),
+      stat("Cancelled value", usd(ledger.totals.cancelledCents)),
+    ),
+    form,
+    rows.length > 0
+      ? el(
+          "table",
+          {},
+          el(
+            "thead",
+            {},
+            el(
+              "tr",
+              {},
+              el("th", {}, "Carrier"),
+              el("th", { class: "numeric" }, "Booked"),
+              el("th", { class: "numeric" }, "Commission"),
+            ),
+          ),
+          el("tbody", {}, rows),
+        )
+      : empty("No capacity booked yet."),
+    el(
+      "p",
+      { class: "small muted" },
+      "Commission is recorded against each booking at the rate in force when it was made. No money moves through this platform: settling these amounts needs a payment processor, and taking a cut of freight moves is what makes a platform a broker in most jurisdictions — see the README.",
+    ),
+  );
+}
+
 function decisionForm(company, refresh) {
   const record = async (status) => {
     try {

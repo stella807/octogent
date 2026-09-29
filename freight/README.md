@@ -35,8 +35,12 @@ opportunity board filtered to loads they are *eligible* for, ranked by fit,
 with a rate band and the current quote count. They quote, counter back, accept,
 withdraw, and update the load's status through to delivery.
 
+**Suppliers can also sell capacity directly.** Instead of waiting for a shipper
+to post a load, a carrier publishes a departure — a dated sailing or run with
+space on it and a price per pallet — and a shipper buys that space outright.
+
 **Admins** review companies and record a verification decision with a note the
-company can read, and see platform totals.
+company can read, see platform totals, and set the commission rate.
 
 **Everyone lands on the command floor** — one live read of the book, scoped to
 who is looking — and the **lane map** shows where that book's freight is going.
@@ -75,6 +79,54 @@ inline styles, so the same `default-src 'self'` policy covers the dashboard.
 Chart colours are steps from one blue ramp, validated against both surfaces
 (light `#256abf`, dark `#3987e5`, each clearing 3:1) rather than picked by eye;
 stations encode *state* (live or idle), not six competing hues.
+
+## Selling capacity, and the commission
+
+The marketplace has two ways to match freight to a truck, because real freight
+buying works both ways:
+
+- **Spot.** A shipper posts a load, suppliers bid, the shipper negotiates and
+  awards. That is the flow above.
+- **Scheduled.** A supplier publishes a departure with capacity and a price; a
+  shipper buys space on it and the load is awarded immediately, no bidding.
+
+A booking is **not a second kind of freight**. It creates an ordinary shipment,
+already awarded to the publishing carrier at the published price, with an
+accepted quote behind it — so the command floor, the lane map, status tracking,
+messaging and the delivery record all keep working without knowing that
+bookings exist. The lane map has a "Capacity for sale" mode that draws
+published departures instead of your own book, priced and bookable.
+
+Capacity is sold with the obvious traps closed:
+
+- **A departure cannot be oversold.** The capacity check, the shipment, the
+  quote, the booking and the commission row are one transaction, so two
+  shippers buying the last pallet at the same moment cannot both succeed.
+  Weight is a limit in its own right, not just pallet count.
+- **Cancelling releases the space** and cancels the shipment with it — but only
+  while the load is still sitting. Once it is picked up, it is the shipment's
+  rules that apply.
+- **A route states what it accepts.** Cargo classes it will not carry and
+  services it does not offer are refused at booking time, with the reason.
+
+### The commission
+
+The platform records a commission on every booking: **8% by default, charged to
+the supplier on the booked amount** — free to list, pay only on capacity
+actually sold. An admin can change the rate.
+
+Two properties matter more than the number:
+
+- **Each booking stores the rate it was made under.** Changing the rate today
+  cannot rewrite what a completed job owed last month. There is a test for it.
+- **Commission is recorded, not charged.** No money moves through this
+  platform. Settling these amounts needs a payment processor — and, more
+  importantly, taking a cut of freight moves is the thing that makes a platform
+  a broker rather than a listing service. In the United States that means
+  FMCSA property-broker authority and a $75,000 surety bond; elsewhere it
+  varies. **Settle that question with a lawyer before turning the ledger into
+  an invoice.** The code is built so that switching on payments is a new
+  adapter, not a rewrite.
 
 ## The lane map
 
@@ -168,6 +220,9 @@ src/adapters/   SQLite implementation of that port, plus the SQL schema
 src/http/       Router, cookies/CSRF, static files — transport only
 src/app/floor.ts  The command floor's view model, scoped per role
 src/app/lanes.ts  The lane map's view model: shipments grouped into lanes
+src/app/routes.ts    Publishing and browsing capacity for sale
+src/app/bookings.ts  Buying space: one transaction from capacity check to commission
+src/app/commission.ts  The rate, and the ledger of what it has recorded
 web/data/        The basemap: Natural Earth land, clipped and simplified
 src/security/   scrypt password hashing, session and CSRF tokens
 web/            Browser client: no build step, no framework, no CDN
@@ -196,7 +251,8 @@ Postgres adapter is a new file, not a rewrite.
 Everything below the line is *not* built, and nothing in the product pretends
 otherwise on screen.
 
-**Implemented and working:** the command floor, the lane map, accounts and companies, roles
+**Implemented and working:** the command floor, the lane map, published route
+capacity with direct booking and a commission ledger, accounts and companies, roles
 (shipper, supplier, admin), sessions, supplier capability profiles, shipment posting with
 marketplace or invite-only visibility, eligibility and scored matching with
 factor-level explanations, opportunity board with filters, quoting,
@@ -212,7 +268,7 @@ statistics, rate guidance from platform history where it exists.
 | Rate guidance | Platform awards on the lane when there are ≥3; otherwise a coarse per-mile or flat ocean-lane placeholder, labelled "not market data" | A market rate API |
 | Identity and authority | MC/DOT numbers recorded as entered, reviewed by an admin | FMCSA (or local equivalent) lookup |
 | Insurance | An expiry date field and an admin note | Certificate ingestion and monitoring |
-| Payments | Nothing. No money moves | Escrow or a payment processor, plus the fee model |
+| Payments | A commission ledger: what is owed, by whom, at the rate in force. No money moves | Escrow or a payment processor — and broker authority settled first |
 | Documents | Nothing. No BOL/POD upload | Object storage with signed URLs and retention rules |
 | Notifications | Nothing. State changes are visible in-app only | Email/SMS/push provider |
 | Live tracking | Status is what the supplier reports | Telematics or an ELD integration |
@@ -244,10 +300,14 @@ Configuration: `PORT`, `FREIGHT_DB` (default `data/freight.db`),
 Phase 1 (accounts, posting, matching, bidding, chat, admin) and the transparent
 matching engine of Phase 2 are here. The natural next steps, in order:
 
-1. **Trust.** Insurance certificate upload with expiry monitoring, FMCSA
+1. **The broker question.** Before the ledger becomes an invoice: what
+   authority, bonding and licensing taking a commission requires in each
+   jurisdiction the freight moves through. This is a lawyer's answer, not a
+   code change, and everything in Phase 5 waits on it.
+2. **Trust.** Insurance certificate upload with expiry monitoring, FMCSA
    lookup, ratings tied to completed shipments, a dispute record.
-2. **Documents.** BOL and POD against the shipment, with retention rules.
-3. **Notifications.** A supplier should not have to refresh a board to learn a
-   counter arrived.
-4. **Money.** Escrow and the fee model — after the legal question above is
-   settled, not before.
+3. **Documents.** BOL and POD against the shipment, with retention rules.
+4. **Notifications.** A supplier should not have to refresh a board to learn a
+   counter arrived, or that their departure sold out.
+5. **Money.** Escrow and settlement against the commission ledger — after the
+   legal question above is settled, not before.

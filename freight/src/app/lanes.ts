@@ -156,7 +156,7 @@ export function laneMapView(store: Store, principal: Principal): LaneMapView {
   };
 }
 
-function endpointOf(place: Place): LaneEndpoint | null {
+export function endpointOf(place: Place): LaneEndpoint | null {
   const located = locate(place);
   if (!located) return null;
   return {

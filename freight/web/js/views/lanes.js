@@ -30,12 +30,39 @@ async function loadLand() {
   return landCache;
 }
 
-export async function renderLanes({ navigate }) {
-  const [map, land] = await Promise.all([api.get("/api/lanes"), loadLand()]);
+export async function renderLanes({ state, navigate }) {
+  const canBuy = state.company?.kind === "shipper";
+  const [map, land, routes] = await Promise.all([
+    api.get("/api/lanes"),
+    loadLand(),
+    api.get("/api/routes").catch(() => []),
+  ]);
 
+  let mode = "freight";
   let stage = "all";
   let selectedId = null;
   const body = el("div", { class: "lanes" });
+
+  const summary = el("span", { class: "small muted" });
+
+  const stageField = el(
+    "div",
+    { class: "field" },
+    el("label", { for: "lane-stage" }, "Stage"),
+    select(
+      "stage",
+      Object.entries(STAGE_FILTERS).map(([value, entry]) => ({ value, label: entry.label })),
+      stage,
+      {
+        id: "lane-stage",
+        onChange: (event) => {
+          stage = event.target.value;
+          selectedId = null;
+          draw();
+        },
+      },
+    ),
+  );
 
   const filters = el(
     "div",
@@ -43,34 +70,35 @@ export async function renderLanes({ navigate }) {
     el(
       "div",
       { class: "field" },
-      el("label", { for: "lane-stage" }, "Stage"),
+      el("label", { for: "lane-mode" }, "Show"),
       select(
-        "stage",
-        Object.entries(STAGE_FILTERS).map(([value, entry]) => ({ value, label: entry.label })),
-        stage,
+        "mode",
+        [
+          { value: "freight", label: "Your freight" },
+          { value: "capacity", label: "Capacity for sale" },
+        ],
+        mode,
         {
-          id: "lane-stage",
+          id: "lane-mode",
           onChange: (event) => {
-            stage = event.target.value;
+            mode = event.target.value;
             selectedId = null;
             draw();
           },
         },
       ),
     ),
-    el(
-      "div",
-      { class: "field" },
-      el("label", {}, " "),
-      el(
-        "span",
-        { class: "small muted" },
-        `${map.totals.lanes} lane(s) · ${map.totals.shipments} shipment(s)`,
-      ),
-    ),
+    stageField,
+    el("div", { class: "field" }, el("label", {}, " "), summary),
   );
 
   function draw() {
+    stageField.hidden = mode === "capacity";
+    if (mode === "capacity") {
+      drawCapacity();
+      return;
+    }
+    replace(summary, `${map.totals.lanes} lane(s) · ${map.totals.shipments} shipment(s)`);
     const lanes = map.lanes
       .map((lane) => ({ ...lane, shipments: lane.shipments.filter(STAGE_FILTERS[stage].matches) }))
       .filter((lane) => lane.shipments.length > 0);
@@ -104,6 +132,46 @@ export async function renderLanes({ navigate }) {
     );
   }
 
+  /**
+   * The same map, drawn from published departures instead of this book's
+   * shipments: what is for sale on each lane, at what price, with how much
+   * space left.
+   */
+  function drawCapacity() {
+    const sellable = routes.filter(
+      (route) => route.sellable && route.originPoint && route.destinationPoint,
+    );
+    const lanes = sellable.map((route) => ({
+      id: route.id,
+      origin: route.originPoint,
+      destination: route.destinationPoint,
+      crossesWater: false,
+      estimatedMiles: route.estimatedMiles,
+      // Line weight carries what is actually on offer.
+      shipments: new Array(Math.max(1, route.remaining.pallets)).fill(null),
+      route,
+    }));
+
+    replace(summary, `${sellable.length} departure(s) with space`);
+    replace(
+      body,
+      lanes.length === 0
+        ? el("div", { class: "card" }, empty("No capacity is on sale on any lane right now."))
+        : mapCard(lanes, land, {
+            selectedId,
+            weightNote: "line weight is space for sale",
+            describeLane: (lane) =>
+              `${lane.route.supplierName} · ${lane.route.reference} · departs ${date(lane.route.departsOn)} · ${usd(lane.route.pricePerPalletCents)}/pallet · ${lane.route.remaining.pallets} space(s) left`,
+            onSelect: (id) => {
+              selectedId = id === selectedId ? null : id;
+              draw();
+            },
+          }),
+      capacityTable(sellable, { canBuy, navigate, selectedId }),
+      footnotes(map),
+    );
+  }
+
   draw();
 
   return el(
@@ -128,7 +196,7 @@ export async function renderLanes({ navigate }) {
   );
 }
 
-function mapCard(lanes, land, { selectedId, onSelect }) {
+function mapCard(lanes, land, { selectedId, onSelect, describeLane, weightNote }) {
   const endpoints = new Map();
   const note = (endpoint, role, weight) => {
     const existing = endpoints.get(endpoint.key);
@@ -152,6 +220,14 @@ function mapCard(lanes, land, { selectedId, onSelect }) {
       replace(
         readout,
         `${lanes.length} lane(s) drawn. Hover a lane, or use Tab and Enter, to read it.`,
+      );
+      return;
+    }
+    if (describeLane) {
+      replace(
+        readout,
+        el("strong", {}, `${lane.origin.label} → ${lane.destination.label}`),
+        ` · ${describeLane(lane)}`,
       );
       return;
     }
@@ -232,7 +308,7 @@ function mapCard(lanes, land, { selectedId, onSelect }) {
       "div",
       { class: "card__head" },
       el("h2", {}, "Lanes"),
-      el("span", { class: "small muted" }, "line weight is shipment count"),
+      el("span", { class: "small muted" }, weightNote ?? "line weight is shipment count"),
     ),
     svgEl(
       "svg",
@@ -335,6 +411,77 @@ function placeLabels(endpoints, project) {
     );
   }
   return nodes;
+}
+
+function capacityTable(routes, { canBuy, navigate, selectedId }) {
+  return el(
+    "div",
+    { class: "card card--flush" },
+    el(
+      "div",
+      { class: "card__head card__head--padded" },
+      el("h2", {}, "Capacity on sale"),
+      el("span", { class: "small muted" }, `${routes.length} departure(s)`),
+    ),
+    el(
+      "table",
+      {},
+      el(
+        "thead",
+        {},
+        el(
+          "tr",
+          {},
+          el("th", {}, "Lane"),
+          el("th", {}, "Carrier"),
+          el("th", {}, "Departs"),
+          el("th", { class: "numeric" }, "Space left"),
+          el("th", { class: "numeric" }, "Per pallet"),
+          el("th", {}, ""),
+        ),
+      ),
+      el(
+        "tbody",
+        {},
+        routes.map((route) =>
+          el(
+            "tr",
+            { class: route.id === selectedId ? "is-selected" : "" },
+            el(
+              "td",
+              {},
+              el(
+                "div",
+                { class: "lane-name" },
+                `${route.origin.city}, ${route.origin.region} → ${route.destination.city}, ${route.destination.region}`,
+              ),
+              el(
+                "div",
+                { class: "tiny muted" },
+                `${route.reference} · ${titleCase(route.equipment)}`,
+              ),
+            ),
+            el("td", { class: "tiny" }, route.supplierName),
+            el("td", { class: "tiny" }, date(route.departsOn)),
+            el("td", { class: "numeric" }, `${route.remaining.pallets} / ${route.capacityPallets}`),
+            el("td", { class: "numeric" }, usd(route.pricePerPalletCents)),
+            el(
+              "td",
+              {},
+              el(
+                "button",
+                {
+                  class: "btn--small btn--primary",
+                  onClick: () => navigate(`#/capacity/${route.id}`),
+                },
+                canBuy ? "Book space" : "View",
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 function laneTable(lanes, { selectedId, onSelect }) {

@@ -14,10 +14,12 @@ import { fileURLToPath } from "node:url";
 import { newId, newReference } from "../domain/ids.ts";
 import type { ComparableAward } from "../domain/rates.ts";
 import type {
+  Booking,
   Company,
   Message,
   Quote,
   QuoteOffer,
+  Route,
   Session,
   Shipment,
   ShipmentEvent,
@@ -29,8 +31,10 @@ import type {
 } from "../domain/types.ts";
 import type {
   FloorEvent,
+  NewBooking,
   NewCompany,
   NewQuote,
+  NewRoute,
   NewShipment,
   NewUser,
   StatDelta,
@@ -60,6 +64,7 @@ const json = <T>(row: Row, key: string, fallback: T): T => {
 
 export class SqliteStore implements Store {
   private readonly db: DatabaseSync;
+  private depth = 0;
 
   constructor(filename: string) {
     if (filename !== ":memory:") mkdirSync(dirname(filename), { recursive: true });
@@ -67,16 +72,30 @@ export class SqliteStore implements Store {
     this.db.exec(readFileSync(SCHEMA_PATH, "utf8"));
   }
 
+  /**
+   * Savepoints rather than BEGIN/COMMIT, so an application-level transaction
+   * can call store methods that transact on their own without SQLite refusing
+   * a nested BEGIN.
+   */
   private transact<T>(work: () => T): T {
-    this.db.exec("BEGIN");
+    const name = `sp_${this.depth}`;
+    this.depth += 1;
+    this.db.exec(`SAVEPOINT ${name}`);
     try {
       const result = work();
-      this.db.exec("COMMIT");
+      this.db.exec(`RELEASE ${name}`);
       return result;
     } catch (error) {
-      this.db.exec("ROLLBACK");
+      this.db.exec(`ROLLBACK TO ${name}`);
+      this.db.exec(`RELEASE ${name}`);
       throw error;
+    } finally {
+      this.depth -= 1;
     }
+  }
+
+  transaction<T>(work: () => T): T {
+    return this.transact(work);
   }
 
   // ---------------------------------------------------------------- companies
@@ -635,6 +654,161 @@ export class SqliteStore implements Store {
     }));
   }
 
+  // ----------------------------------------------------- routes and bookings
+
+  createRoute(route: NewRoute): Route {
+    const id = newId("rte");
+    const createdAt = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO routes (id, reference, supplier_company_id, origin_city, origin_region,
+           origin_country, dest_city, dest_region, dest_country, equipment, departs_on, arrives_by,
+           booking_cutoff, capacity_pallets, capacity_weight_lbs, price_per_pallet_cents,
+           minimum_charge_cents, cargo_types, capabilities, notes, status, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'open',?)`,
+      )
+      .run(
+        id,
+        newReference("RTE"),
+        route.supplierCompanyId,
+        route.origin.city,
+        route.origin.region,
+        route.origin.country,
+        route.destination.city,
+        route.destination.region,
+        route.destination.country,
+        route.equipment,
+        route.departsOn,
+        route.arrivesBy,
+        route.bookingCutoff,
+        route.capacityPallets,
+        route.capacityWeightLbs,
+        route.pricePerPalletCents,
+        route.minimumChargeCents,
+        JSON.stringify(route.cargoTypes),
+        JSON.stringify(route.capabilities),
+        route.notes,
+        createdAt,
+      );
+    return this.getRoute(id) as Route;
+  }
+
+  getRoute(id: string): Route | null {
+    const row = this.db.prepare("SELECT * FROM routes WHERE id = ?").get(id) as Row | undefined;
+    return row ? toRoute(row) : null;
+  }
+
+  listRoutesForSupplier(companyId: string): Route[] {
+    const rows = this.db
+      .prepare("SELECT * FROM routes WHERE supplier_company_id = ? ORDER BY departs_on, id")
+      .all(companyId) as Row[];
+    return rows.map(toRoute);
+  }
+
+  listOpenRoutes(): Route[] {
+    const rows = this.db
+      .prepare("SELECT * FROM routes WHERE status = 'open' ORDER BY departs_on, id")
+      .all() as Row[];
+    return rows.map(toRoute);
+  }
+
+  listAllRoutes(): Route[] {
+    const rows = this.db
+      .prepare("SELECT * FROM routes ORDER BY departs_on DESC, id")
+      .all() as Row[];
+    return rows.map(toRoute);
+  }
+
+  setRouteStatus(id: string, status: Route["status"]): Route | null {
+    this.db.prepare("UPDATE routes SET status = ? WHERE id = ?").run(status, id);
+    return this.getRoute(id);
+  }
+
+  createBooking(booking: NewBooking): Booking {
+    const id = newId("bkg");
+    const createdAt = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO bookings (id, reference, route_id, shipper_company_id, shipment_id, pallets,
+           weight_lbs, cargo_type, cargo_description, price_cents, commission_bps, commission_cents,
+           status, created_at, cancelled_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'booked',?,NULL)`,
+      )
+      .run(
+        id,
+        newReference("BKG"),
+        booking.routeId,
+        booking.shipperCompanyId,
+        booking.shipmentId,
+        booking.pallets,
+        booking.weightLbs,
+        booking.cargoType,
+        booking.cargoDescription,
+        booking.priceCents,
+        booking.commissionBps,
+        booking.commissionCents,
+        createdAt,
+      );
+    return this.getBooking(id) as Booking;
+  }
+
+  getBooking(id: string): Booking | null {
+    const row = this.db.prepare("SELECT * FROM bookings WHERE id = ?").get(id) as Row | undefined;
+    return row ? toBooking(row) : null;
+  }
+
+  listBookingsForRoute(routeId: string): Booking[] {
+    const rows = this.db
+      .prepare("SELECT * FROM bookings WHERE route_id = ? ORDER BY created_at, id")
+      .all(routeId) as Row[];
+    return rows.map(toBooking);
+  }
+
+  listBookingsForShipper(companyId: string): Booking[] {
+    const rows = this.db
+      .prepare("SELECT * FROM bookings WHERE shipper_company_id = ? ORDER BY created_at DESC")
+      .all(companyId) as Row[];
+    return rows.map(toBooking);
+  }
+
+  listBookingsForSupplier(companyId: string): Booking[] {
+    const rows = this.db
+      .prepare(
+        `SELECT b.* FROM bookings b JOIN routes r ON r.id = b.route_id
+         WHERE r.supplier_company_id = ? ORDER BY b.created_at DESC`,
+      )
+      .all(companyId) as Row[];
+    return rows.map(toBooking);
+  }
+
+  listAllBookings(): Booking[] {
+    const rows = this.db.prepare("SELECT * FROM bookings ORDER BY created_at DESC").all() as Row[];
+    return rows.map(toBooking);
+  }
+
+  setBookingStatus(id: string, status: Booking["status"], at: string | null): Booking | null {
+    this.db
+      .prepare("UPDATE bookings SET status = ?, cancelled_at = ? WHERE id = ?")
+      .run(status, at, id);
+    return this.getBooking(id);
+  }
+
+  getSetting(key: string): string | null {
+    const row = this.db.prepare("SELECT value FROM platform_settings WHERE key = ?").get(key) as
+      | Row
+      | undefined;
+    return row ? text(row, "value") : null;
+  }
+
+  setSetting(key: string, value: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO platform_settings (key, value, updated_at) VALUES (?,?,?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .run(key, value, new Date().toISOString());
+  }
+
   listComparableAwards(): ComparableAward[] {
     const rows = this.db
       .prepare(
@@ -803,6 +977,57 @@ function toOffer(row: Row): QuoteOffer {
     transitDays: int(row, "transit_days"),
     note: text(row, "note"),
     createdAt: text(row, "created_at"),
+  };
+}
+
+function toRoute(row: Row): Route {
+  return {
+    id: text(row, "id"),
+    reference: text(row, "reference"),
+    supplierCompanyId: text(row, "supplier_company_id"),
+    origin: {
+      city: text(row, "origin_city"),
+      region: text(row, "origin_region"),
+      country: text(row, "origin_country"),
+    },
+    destination: {
+      city: text(row, "dest_city"),
+      region: text(row, "dest_region"),
+      country: text(row, "dest_country"),
+    },
+    equipment: text(row, "equipment") as Route["equipment"],
+    departsOn: text(row, "departs_on"),
+    arrivesBy: text(row, "arrives_by"),
+    bookingCutoff: text(row, "booking_cutoff"),
+    capacityPallets: int(row, "capacity_pallets"),
+    capacityWeightLbs: int(row, "capacity_weight_lbs"),
+    pricePerPalletCents: int(row, "price_per_pallet_cents"),
+    minimumChargeCents: int(row, "minimum_charge_cents"),
+    cargoTypes: json(row, "cargo_types", [] as Route["cargoTypes"]),
+    capabilities: json(row, "capabilities", [] as Route["capabilities"]),
+    notes: text(row, "notes"),
+    status: text(row, "status") as Route["status"],
+    createdAt: text(row, "created_at"),
+  };
+}
+
+function toBooking(row: Row): Booking {
+  return {
+    id: text(row, "id"),
+    reference: text(row, "reference"),
+    routeId: text(row, "route_id"),
+    shipperCompanyId: text(row, "shipper_company_id"),
+    shipmentId: text(row, "shipment_id"),
+    pallets: int(row, "pallets"),
+    weightLbs: int(row, "weight_lbs"),
+    cargoType: text(row, "cargo_type") as Booking["cargoType"],
+    cargoDescription: text(row, "cargo_description"),
+    priceCents: int(row, "price_cents"),
+    commissionBps: int(row, "commission_bps"),
+    commissionCents: int(row, "commission_cents"),
+    status: text(row, "status") as Booking["status"],
+    createdAt: text(row, "created_at"),
+    cancelledAt: textOrNull(row, "cancelled_at"),
   };
 }
 

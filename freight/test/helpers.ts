@@ -145,6 +145,36 @@ export const shipmentPayload = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+export const routePayload = (overrides: Record<string, unknown> = {}) => ({
+  originCity: "Miami",
+  originRegion: "FL",
+  originCountry: "US",
+  destinationCity: "San Juan",
+  destinationRegion: "PR",
+  destinationCountry: "US",
+  equipment: "dry_van",
+  departsOn: "2026-11-10",
+  arrivesBy: "2026-11-13",
+  bookingCutoff: "2026-11-08",
+  capacityPallets: 20,
+  capacityWeightLbs: 44000,
+  pricePerPallet: 420,
+  minimumCharge: 1500,
+  cargoTypes: ["general_palletized", "beverages"],
+  capabilities: ["port_drayage"],
+  notes: "Weekly Thursday sailing",
+  ...overrides,
+});
+
+export const bookingPayload = (overrides: Record<string, unknown> = {}) => ({
+  pallets: 8,
+  weightLbs: 12000,
+  cargoType: "general_palletized",
+  cargoDescription: "8 pallets of shelf-stable groceries",
+  specialRequirements: ["port_drayage"],
+  ...overrides,
+});
+
 /** Builds a matching input without touching the database, for domain tests. */
 export function matchInput(
   overrides: {
