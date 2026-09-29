@@ -626,6 +626,35 @@ It sat out the 2021-2022 bear market entirely (0 trades) rather than losing
 money trying to apply an uptrend-pullback premise to a market with no
 uptrend -- correct, conservative behaviour, not a gap in the strategy.
 
+## Grid and DCA bots — the two most-sold bot types, tested
+
+Grid trading and "DCA with safety orders" are the default strategies in
+OctoBot, 3Commas and most bot platforms. Both are built here the same way
+those platforms describe them, with one addition each: a stop where the
+range or the averaging-down gives up, because neither ships with one by
+default elsewhere.
+
+BTC/USD daily, 3000 bars, $10,000, same costs as everything above:
+
+| | win rate | total return | avg win / avg loss | Calmar | walk-forward efficiency |
+|---|---|---|---|---|---|
+| `grid-range` | 78% | **-4.16%** | $22 / -$133 | -0.10 | 0.40 (fails) |
+| `dca-safety` | **93%** | +10.31% | $20 / -$139 | 0.24 | 0.70 (passes) |
+| `dca-safety`, no trend filter | 92% | +16.34% | $20 / -$196 | 0.33 | -- |
+| `donchian-breakout`, for scale | 44% | +28.12% | $261 / -$82 | 0.72 | 0.65 |
+
+`dca-safety` is the closest anything in this repo gets to the "99% win rate"
+this project was originally asked for, and it is also the cleanest
+demonstration of why that number is the wrong thing to want. Each loss is
+roughly seven wins. It still survives walk-forward, and Monte Carlo puts its
+chance of ending below start at 4.55% with a 95th-percentile drawdown of
+7.1% — but only because every position is risk-sized off a stop. The classic
+DCA bot, with no stop and the whole account committed, has the same win rate
+and none of that protection.
+
+The grid wins more than three trades in four and still loses money, because
+it is most heavily loaded exactly when price is falling hardest.
+
 ## Strategies
 
 | strategy | shape | why it is here |
@@ -640,10 +669,12 @@ uptrend -- correct, conservative behaviour, not a gap in the strategy.
 | `donchian-sentiment` | donchian-breakout, gated by Fear & Greed Index | Tested the sentiment hypothesis directly; it made returns worse, not better. |
 | `bxtrender-adx` | B-Xtrender direction, gated by ADX trend strength | From the viral indicator-checklist screenshot; fails walk-forward (efficiency 0.12). |
 | `master-consensus` | TSI + TDFI + McGinley Dynamic, all must agree | Best full-sample Calmar of any strategy here (1.20); worst walk-forward efficiency (0.04). |
-
-`search` is a command, not a strategy -- see above for what it tests.
 | `ema-zone-reversal` | buys the bounce off an EMA support/resistance zone | Best walk-forward efficiency (1.02) and lowest ruin probability (0.78%) of any strategy here. |
 | `take-profit-scalp` | tiny target, distant or absent stop | **Not for trading.** The 99%-win-rate demo above. |
+| `grid-range` | buys a slice per ATR step below its average, sells each a step higher | 78% win rate, loses money; fails walk-forward (efficiency 0.40). |
+| `dca-safety` | base order + safety orders, take profit on average cost | 93% win rate, payoff 0.15; passes walk-forward (0.70) but Calmar only 0.24. |
+
+`search` is a command, not a strategy -- see above for what it tests.
 
 Multi-asset strategies, for the `portfolio` command:
 

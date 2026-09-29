@@ -10,6 +10,8 @@ import { donchianSentiment } from './donchian-sentiment.ts';
 import { bxtrenderAdx } from './bxtrender-adx.ts';
 import { masterConsensus } from './master-consensus.ts';
 import { emaZoneReversal } from './ema-zone-reversal.ts';
+import { gridRange } from './grid-range.ts';
+import { dcaSafety } from './dca-safety.ts';
 import type { StrategyFactory } from './types.ts';
 
 export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
@@ -25,6 +27,8 @@ export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
   [bxtrenderAdx.name]: bxtrenderAdx,
   [masterConsensus.name]: masterConsensus,
   [emaZoneReversal.name]: emaZoneReversal,
+  [gridRange.name]: gridRange,
+  [dcaSafety.name]: dcaSafety,
 };
 
 export function getStrategy(name: string): StrategyFactory {
@@ -50,5 +54,7 @@ export {
   bxtrenderAdx,
   masterConsensus,
   emaZoneReversal,
+  gridRange,
+  dcaSafety,
 };
 export * from './types.ts';
