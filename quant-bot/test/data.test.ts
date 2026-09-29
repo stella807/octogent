@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseCsv } from '../src/data/csv.ts';
-import { fetchCandles, type FetchOptions } from '../src/data/exchange.ts';
+import { downloadCandles, fetchCandles, firstListedPage, type FetchOptions, type OhlcvSource } from '../src/data/exchange.ts';
 import { generateCandles } from '../src/data/synthetic.ts';
 import type { Candle } from '../src/domain/types.ts';
 
@@ -130,6 +130,64 @@ describe('fetchCandles caching', () => {
     const result = await fetchCandles({ ...baseOptions, cacheDir, noCache: true }, second.download);
     expect(second.calls()).toBe(1);
     expect(result[0]?.time).toBe(2);
+  });
+});
+
+describe('downloading coins listed after the requested window starts', () => {
+  const DAY = 86_400_000;
+  const today = Math.floor(Date.now() / DAY) * DAY;
+
+  /** Serves one fixed window per request, capped like a real exchange. */
+  function exchange(listedDaysAgo: number | null, cap: number): OhlcvSource & { requests: number } {
+    const src = {
+      requests: 0,
+      async fetchOHLCV(_s: string, _tf: string, since = 0, limit = 1000): Promise<(number | undefined)[][]> {
+        src.requests += 1;
+        if (listedDaysAgo === null) return [];
+        const listed = today - listedDaysAgo * DAY;
+        const rows: number[][] = [];
+        for (let t = Math.max(since, listed); t < since + Math.min(limit, cap) * DAY && t <= today; t += DAY) {
+          const aligned = Math.ceil(t / DAY) * DAY;
+          if (aligned < since + Math.min(limit, cap) * DAY && aligned >= listed && aligned <= today) {
+            rows.push([aligned, 1, 1, 1, 1, 1]);
+          }
+          t = aligned;
+        }
+        return rows;
+      },
+    };
+    return src;
+  }
+  const options = { exchange: 'coinbase', symbol: 'NEW/USD', timeframe: '1d' as const, bars: 2000, cacheDir: '' };
+
+  it('finds a coin listed 400 days ago on an exchange that caps pages at 300 bars', async () => {
+    // The old fixed 1,000-bar skip jumped straight past this listing and
+    // returned nothing, reporting the coin as having no data at all.
+    const candles = await downloadCandles(options, exchange(400, 300));
+    expect(candles[0]?.time).toBe(today - 400 * DAY);
+    expect(candles.length).toBeGreaterThanOrEqual(398);
+  });
+
+  it('works whatever the page cap, including very small ones', async () => {
+    const candles = await downloadCandles(options, exchange(1234, 100));
+    expect(candles[0]?.time).toBe(today - 1234 * DAY);
+  });
+
+  it('returns nothing for a market with no trading at all, without paging forever', async () => {
+    const src = exchange(null, 300);
+    expect(await downloadCandles(options, src)).toEqual([]);
+    expect(src.requests).toBeLessThanOrEqual(2);
+  });
+
+  it('locates the listing in a logarithmic number of requests', async () => {
+    let requests = 0;
+    const listed = 700;
+    const found = await firstListedPage(async (cursor: number) => {
+      requests += 1;
+      return cursor + 300 > listed ? [cursor] : [];
+    }, 0, 2000, 1);
+    expect(found?.cursor).toBe(listed - 299);
+    expect(requests).toBeLessThanOrEqual(13);
   });
 });
 

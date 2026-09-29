@@ -622,9 +622,13 @@ async function resolveTradeSymbols(
   const path = screenPath(values['state'] as string);
   const screen = await readScreenFile(path);
   if (!screen) throw new Error(`no screen results at ${path}; run \`screen\` first`);
-  if (screen.strategy !== strategy || screen.exchange !== exchange) {
+  const timeframe = values['timeframe'] as string;
+  if (screen.strategy !== strategy || screen.exchange !== exchange || screen.timeframe !== timeframe) {
+    // A pass on daily bars says nothing about the same parameters on hourly
+    // bars — the lookbacks mean entirely different spans of time.
     throw new Error(
-      `the last screen was ${screen.strategy} on ${screen.exchange}, not ${strategy} on ${exchange}; re-run screen`,
+      `the last screen was ${screen.strategy} on ${screen.exchange} ${screen.timeframe} bars, ` +
+      `not ${strategy} on ${exchange} ${timeframe}; re-run screen with matching flags`,
     );
   }
   if (screen.symbols.length === 0) throw new Error('the last screen passed no symbols; nothing to trade');

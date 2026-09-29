@@ -58,32 +58,30 @@ export async function fetchCandles(
   return candles;
 }
 
-async function downloadCandles(options: FetchOptions): Promise<Candle[]> {
-  const client = await connect(options.exchange);
+export async function downloadCandles(options: FetchOptions, source?: OhlcvSource): Promise<Candle[]> {
+  const client = source ?? await connect(options.exchange);
 
   const barMs = TIMEFRAME_MS[options.timeframe];
-  const since = options.since ?? Date.now() - options.bars * barMs;
+  const now = Date.now();
+  const since = options.since ?? now - options.bars * barMs;
   const until = options.until ?? Number.POSITIVE_INFINITY;
-  const candles: Candle[] = [];
-  let cursor = since;
   const pageSize = 1000;
-  // A symbol listed after `since` returns empty pages for the window before it
-  // existed. Stopping there would report "no data" for every coin younger than
-  // the requested history, so skip forward instead — bounded, so a genuinely
-  // dead symbol still terminates.
-  let emptyPages = 0;
-  const maxEmptyPages = 40;
+  const probe = (cursor: number): Promise<(number | undefined)[][]> =>
+    withRetry(() => client.fetchOHLCV(options.symbol, options.timeframe, cursor, pageSize));
 
-  while (candles.length < options.bars) {
-    const page = await withRetry(() => client.fetchOHLCV(options.symbol, options.timeframe, cursor, pageSize));
-    if (page.length === 0) {
-      if (candles.length > 0 || emptyPages >= maxEmptyPages) break;
-      emptyPages += 1;
-      cursor += pageSize * barMs;
-      if (cursor > Date.now()) break;
-      continue;
-    }
-    emptyPages = 0;
+  let cursor = since;
+  let page = await probe(cursor);
+  if (page.length === 0) {
+    // Nothing at the start of the window: the symbol was listed later (or
+    // is not trading). Find where its history actually begins.
+    const found = await firstListedPage(probe, since, Math.min(until, now - barMs), barMs);
+    if (!found) return [];
+    cursor = found.cursor;
+    page = found.page;
+  }
+
+  const candles: Candle[] = [];
+  for (;;) {
     for (const row of page) {
       const [time, open, high, low, close, volume] = row;
       if (time === undefined || close === undefined) continue;
@@ -100,11 +98,14 @@ async function downloadCandles(options: FetchOptions): Promise<Candle[]> {
         volume: volume ?? 0,
       });
     }
+    if (candles.length >= options.bars) break;
     const newest = candles[candles.length - 1];
     if (!newest || newest.time <= cursor) break;
     if (newest.time >= until) break;
     cursor = newest.time + barMs;
-    if (cursor > Date.now()) break;
+    if (cursor > now) break;
+    page = await probe(cursor);
+    if (page.length === 0) break;
   }
 
   // The final bar is still open until its period elapses; trading on a partial
@@ -136,6 +137,50 @@ export async function listMarkets(exchange: string, quote: string): Promise<stri
     .filter((m) => m.spot !== false && m.active !== false && m.quote === quote && !STABLECOINS.has(m.base))
     .map((m) => m.symbol)
     .sort();
+}
+
+/** Anything that serves OHLCV pages the way ccxt's fetchOHLCV does. */
+export interface OhlcvSource {
+  fetchOHLCV(symbol: string, timeframe: string, since?: number, limit?: number): Promise<(number | undefined)[][]>;
+}
+
+/**
+ * Finds the first non-empty page for a symbol listed after `from`.
+ *
+ * Stepping forward a fixed distance per empty page skips any listing that
+ * falls between probes whenever the exchange returns fewer bars per request
+ * than the step — Coinbase returns 300 of a requested 1,000, so every coin
+ * listed in the 700 days each step jumped over came back as "no data". A page
+ * is non-empty exactly when the listing lies within one page of its cursor,
+ * so emptiness flips once as the cursor moves forward: a binary search finds
+ * that point in about log2(window) requests, whatever the exchange's page cap.
+ */
+export async function firstListedPage<T>(
+  probe: (cursor: number) => Promise<T[]>,
+  from: number,
+  to: number,
+  barMs: number,
+): Promise<{ cursor: number; page: T[] } | null> {
+  if (to <= from) return null;
+  const latest = await probe(to);
+  // Nothing even in the most recent window: delisted or never traded.
+  if (latest.length === 0) return null;
+  let lo = from; // known empty
+  let hi = to; // known non-empty
+  let hiPage = latest;
+  for (;;) {
+    const steps = Math.floor((hi - lo) / barMs);
+    if (steps < 2) break;
+    const mid = lo + Math.floor(steps / 2) * barMs;
+    const page = await probe(mid);
+    if (page.length > 0) {
+      hi = mid;
+      hiPage = page;
+    } else {
+      lo = mid;
+    }
+  }
+  return { cursor: hi, page: hiPage };
 }
 
 /**
@@ -189,7 +234,7 @@ export async function withRetry<T>(
   }
 }
 
-interface CcxtExchange {
+interface CcxtExchange extends OhlcvSource {
   loadMarkets?(): Promise<Record<string, CcxtMarket>>;
   fetchOHLCV(
     symbol: string,
