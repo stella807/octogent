@@ -226,7 +226,22 @@ order the exchange refuses (too small, not enough cash) is recorded and not
 retried every poll, and one market failing to load does not stop the rest.
 
 Screening hundreds of markets and keeping the winners lets some through on
-luck; the report says so. A pass is permission to paper trade, not proof.
+luck, so `--control` measures it: every market is screened a second time
+with its days shuffled — each bar's size and shape kept, every pattern
+across days destroyed — and the pass rate there is what luck hands out.
+
+The first full run, `donchian-breakout` on all 398 Coinbase USD markets
+(2,000 daily bars, $25):
+
+| | markets testable | passed |
+|---|---|---|
+| real history | 368 | 8 (LIGHTER, NEAR, ETH, PNUT, SOL, CRO, ENS, ZEC) |
+| same markets, days shuffled | 368 | 7 (1.9%) |
+
+Eight real passes against about seven expected from luck: the list is
+indistinguishable from noise. BTC itself failed on this window (efficiency
+0.41), after passing on the 3,000-bar window used earlier. A pass is
+permission to paper trade, not proof — and here, not even evidence.
 
 `--help` lists every flag.
 
