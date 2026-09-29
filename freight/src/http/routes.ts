@@ -14,6 +14,7 @@ import {
 import { listCompanies, platformStats, setVerification } from "../app/admin.ts";
 import { unauthorized } from "../app/errors.ts";
 import { floorView } from "../app/floor.ts";
+import { laneMapView } from "../app/lanes.ts";
 import { listThread, sendMessage } from "../app/messages.ts";
 import { listOpportunities, parseFilters } from "../app/opportunities.ts";
 import type { Principal } from "../app/principal.ts";
@@ -147,6 +148,13 @@ export const routes: Route<Ctx>[] = [
     pattern: "/api/floor",
     auth: true,
     handler: (context) => floorView(context.store, me(context)),
+  },
+
+  {
+    method: "GET",
+    pattern: "/api/lanes",
+    auth: true,
+    handler: (context) => laneMapView(context.store, me(context)),
   },
 
   {

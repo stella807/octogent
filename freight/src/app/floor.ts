@@ -12,9 +12,9 @@
 import { eligibilityFailures } from "../domain/matching.ts";
 import type { Quote, Shipment } from "../domain/types.ts";
 import type { FloorEvent, Store, SupplierRecord } from "../ports/store.ts";
-import { forbidden } from "./errors.ts";
 import type { Principal } from "./principal.ts";
-import { canSupplierSee } from "./shipments.ts";
+import type { Scope } from "./scope.ts";
+import { resolveScope, scopedShipments } from "./scope.ts";
 
 export type StationKey = "intake" | "match" | "quote" | "counter" | "award" | "settle";
 
@@ -46,7 +46,7 @@ export type CurvePoint = {
 };
 
 export type FloorView = {
-  scope: "shipper" | "supplier" | "admin";
+  scope: Scope;
   generatedAt: string;
   stations: Station[];
   metrics: Metric[];
@@ -60,7 +60,7 @@ export function floorView(store: Store, principal: Principal): FloorView {
   const scope = resolveScope(principal);
   const companyId = principal.company?.id ?? null;
 
-  const shipments = scopedShipments(store, principal, scope, companyId);
+  const shipments = scopedShipments(store, scope, companyId);
   const quotesByShipment = new Map<string, Quote[]>(
     shipments.map((shipment) => [shipment.id, store.listQuotesForShipment(shipment.id)]),
   );
@@ -85,41 +85,11 @@ export function floorView(store: Store, principal: Principal): FloorView {
   };
 }
 
-function resolveScope(principal: Principal): FloorView["scope"] {
-  if (principal.user.role === "admin") return "admin";
-  const kind = principal.company?.kind;
-  if (kind === "shipper" || kind === "supplier") return kind;
-  throw forbidden("This account has no company to show a floor for");
-}
-
-/**
- * A supplier's floor covers the posted book they can see plus everything they
- * have bid on — including loads that closed to them, so a lost award still
- * shows in the tape.
- */
-function scopedShipments(
-  store: Store,
-  principal: Principal,
-  scope: FloorView["scope"],
-  companyId: string | null,
-): Shipment[] {
-  if (scope === "admin") return store.listAllShipments();
-  if (!companyId) return [];
-  if (scope === "shipper") return store.listShipmentsForShipper(companyId);
-
-  const bidOn = store.listShipmentsForSupplier(companyId);
-  const seen = new Set(bidOn.map((shipment) => shipment.id));
-  const open = store
-    .listPostedShipments()
-    .filter((shipment) => !seen.has(shipment.id) && canSupplierSee(store, shipment, companyId));
-  return [...bidOn, ...open];
-}
-
 function buildStations(
   shipments: Shipment[],
   quotesByShipment: Map<string, Quote[]>,
   quotes: Quote[],
-  scope: FloorView["scope"],
+  scope: Scope,
   companyId: string | null,
   supplierRecord: SupplierRecord | null,
 ): Station[] {
@@ -179,7 +149,7 @@ function buildStations(
  */
 function matchStationCount(
   posted: Shipment[],
-  scope: FloorView["scope"],
+  scope: Scope,
   supplierRecord: SupplierRecord | null,
 ): { count: number; detail: string } {
   if (scope === "supplier") {
@@ -206,7 +176,7 @@ function buildMetrics(
   shipments: Shipment[],
   quotesByShipment: Map<string, Quote[]>,
   quotes: Quote[],
-  scope: FloorView["scope"],
+  scope: Scope,
   supplierRecord: SupplierRecord | null,
 ): Metric[] {
   const open = shipments.filter((shipment) => shipment.status === "posted").length;
@@ -310,7 +280,7 @@ function medianFirstQuoteHours(
 function buildCurve(
   shipments: Shipment[],
   quotesByShipment: Map<string, Quote[]>,
-  scope: FloorView["scope"],
+  scope: Scope,
   companyId: string | null,
 ): CurvePoint[] {
   const awards: { at: string; reference: string; priceCents: number }[] = [];

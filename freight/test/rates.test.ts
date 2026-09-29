@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { laneMiles } from "../src/domain/geo.ts";
+import { placeMiles } from "../src/domain/geo.ts";
 import { suggestRate } from "../src/domain/rates.ts";
 import { testShipment } from "./helpers.ts";
 
@@ -47,8 +47,16 @@ describe("rate guidance", () => {
     assert.match(inland.detail, /\/mi ×/);
   });
 
-  it("reports the mileage estimate it used", () => {
-    const band = suggestRate(testShipment(), []);
-    assert.equal(band.miles, laneMiles("US-FL", "US-PR"));
+  it("reports the mileage estimate it used, at city precision where it has it", () => {
+    const shipment = testShipment();
+    const band = suggestRate(shipment, []);
+    assert.equal(band.miles, placeMiles(shipment.origin, shipment.destination));
+    // Jacksonville is 200-odd miles further from San Juan than Miami is, and the
+    // estimate has to see that rather than collapsing both to one state centroid.
+    const fromJacksonville = suggestRate(
+      testShipment({ origin: { city: "Jacksonville", region: "FL", country: "US" } }),
+      [],
+    );
+    assert.ok((fromJacksonville.miles ?? 0) > (band.miles ?? 0) + 150);
   });
 });

@@ -7,7 +7,7 @@
  * access.
  */
 
-import { laneMiles, regionKey } from "../domain/geo.ts";
+import { placeMiles } from "../domain/geo.ts";
 import { rankSuppliers } from "../domain/matching.ts";
 import type { MatchResult } from "../domain/matching.ts";
 import { suggestRate } from "../domain/rates.ts";
@@ -125,7 +125,7 @@ export function getShipmentView(
       verificationStatus: shipperCompany.verificationStatus,
       place: shipperCompany.place,
     },
-    estimatedMiles: laneMiles(regionKey(shipment.origin), regionKey(shipment.destination)),
+    estimatedMiles: placeMiles(shipment.origin, shipment.destination),
     quotes: visibleQuotes.map((quote) => decorateQuote(store, quote)),
     events: store.listEvents(shipment.id),
     rateBand: suggestRate(shipment, store.listComparableAwards()),

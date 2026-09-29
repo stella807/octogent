@@ -1,0 +1,136 @@
+/* Lane map.
+ *
+ * The basemap is deliberately quiet — two flat steps of the surface ramp — so
+ * the only saturated ink on the page is the freight. Lanes carry the one chart
+ * hue; count is encoded by line weight, and direction by pin shape, so colour
+ * is never asked to say two things at once.
+ */
+
+:root {
+  --map-ocean: #f1f5f9;
+  --map-land: #e0e7ee;
+  --map-land-edge: #c9d5df;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --map-ocean: #0f1a21;
+    --map-land: #1c2a33;
+    --map-land-edge: #2b3b46;
+  }
+}
+
+.lanes-page {
+  display: grid;
+  gap: 16px;
+}
+.lanes {
+  display: grid;
+  gap: 16px;
+}
+
+.card--map {
+  padding-bottom: 10px;
+}
+.map {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 8px;
+}
+.map__ocean {
+  fill: var(--map-ocean);
+}
+.map__land path {
+  fill: var(--map-land);
+  stroke: var(--map-land-edge);
+  stroke-width: 1;
+}
+
+.lane {
+  fill: none;
+  stroke: var(--chart-mark);
+  stroke-linecap: round;
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+/* The hit target, ~18px wide and invisible, so a thin lane is still clickable. */
+.lane__hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 18;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.lane__hit:focus {
+  outline: none;
+}
+
+.lane-group:hover .lane {
+  opacity: 1;
+}
+.lane-group:focus-within .lane,
+.lane-group--selected .lane {
+  opacity: 1;
+  stroke: var(--accent);
+}
+.lane-group:focus-within .lane {
+  stroke-dasharray: 6 3;
+}
+
+.pin__dot {
+  fill: var(--chart-mark);
+  stroke: var(--map-ocean);
+  stroke-width: 2;
+}
+/* Hollow marks the delivery end: direction is shape, not a second colour. */
+.pin__dot--destination {
+  fill: var(--map-ocean);
+  stroke: var(--chart-mark);
+  stroke-width: 2.5;
+}
+.pin__halo {
+  fill: color-mix(in srgb, var(--chart-mark) 12%, transparent);
+}
+
+.map__leader {
+  stroke: var(--ink-soft);
+  stroke-width: 1;
+  opacity: 0.55;
+}
+
+.map__label {
+  fill: var(--ink);
+  stroke: var(--map-ocean);
+  stroke-width: 3;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.lane-name {
+  font-weight: 600;
+}
+tbody tr.is-selected {
+  background: color-mix(in srgb, var(--chart-mark) 12%, transparent);
+}
+tbody tr[tabindex]:hover {
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.notes {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+.notes strong {
+  color: var(--ink);
+}
+
+@media (max-width: 720px) {
+  .map {
+    min-height: 240px;
+  }
+}

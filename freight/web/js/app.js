@@ -6,6 +6,7 @@ import { clear, el, replace, toast } from "./dom.js";
 import { renderAdmin } from "./views/admin.js";
 import { renderAuth } from "./views/auth.js";
 import { renderFloor } from "./views/floor.js";
+import { renderLanes } from "./views/lanes.js";
 import { renderShipment } from "./views/shipment.js";
 import { renderNewShipment, renderShipmentList } from "./views/shipper.js";
 import { renderMyQuotes, renderOpportunities, renderSupplierProfile } from "./views/supplier.js";
@@ -14,6 +15,7 @@ const state = { user: null, company: null, reference: null };
 
 const ROUTES = [
   { pattern: /^#\/floor$/, roles: ["shipper", "supplier", "admin"], view: renderFloor },
+  { pattern: /^#\/lanes$/, roles: ["shipper", "supplier", "admin"], view: renderLanes },
   { pattern: /^#\/shipments\/new$/, roles: ["shipper"], view: renderNewShipment },
   {
     pattern: /^#\/shipments\/([^/]+)$/,
@@ -32,11 +34,13 @@ const NAV = {
   shipper: [
     { href: "#/floor", label: "Command floor" },
     { href: "#/shipments", label: "Shipments" },
+    { href: "#/lanes", label: "Lane map" },
     { href: "#/shipments/new", label: "Post a shipment" },
   ],
   supplier: [
     { href: "#/floor", label: "Command floor" },
     { href: "#/opportunities", label: "Opportunities" },
+    { href: "#/lanes", label: "Lane map" },
     { href: "#/quotes", label: "My quotes" },
     { href: "#/shipments", label: "My shipments" },
     { href: "#/profile", label: "Capabilities" },
@@ -44,6 +48,7 @@ const NAV = {
   admin: [
     { href: "#/floor", label: "Command floor" },
     { href: "#/admin", label: "Platform" },
+    { href: "#/lanes", label: "Lane map" },
     { href: "#/shipments", label: "All shipments" },
   ],
 };

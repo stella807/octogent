@@ -14,7 +14,7 @@
  * new supplier is not quietly buried under an unexplained number.
  */
 
-import { areNeighbors, crossesWater, laneMiles, regionKey } from "./geo.ts";
+import { areNeighbors, placeMiles, regionKey } from "./geo.ts";
 import { CARGO_EQUIPMENT_REQUIREMENTS } from "./types.ts";
 import type { Company, Shipment, SupplierProfile, SupplierStats } from "./types.ts";
 
@@ -281,7 +281,7 @@ export function scoreSupplier(shipment: Shipment, input: MatchInput): MatchResul
   const availability = availabilityScore(profile, shipment);
   const performance = performanceScore(stats);
   const responsiveness = responsivenessScore(stats);
-  const price = priceScore(profile, shipment, laneMiles(origin, destination));
+  const price = priceScore(profile, shipment, placeMiles(shipment.origin, shipment.destination));
   const verification = verificationScore(company);
 
   const factors: MatchFactor[] = [

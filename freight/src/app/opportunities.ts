@@ -4,7 +4,7 @@
  * dispatcher actually uses.
  */
 
-import { laneMiles, regionKey } from "../domain/geo.ts";
+import { placeMiles, regionKey } from "../domain/geo.ts";
 import { rankOpportunities } from "../domain/matching.ts";
 import type { MatchResult } from "../domain/matching.ts";
 import { suggestRate } from "../domain/rates.ts";
@@ -96,7 +96,7 @@ export function listOpportunities(
       shipment,
       match,
       rateBand: suggestRate(shipment, comparables),
-      estimatedMiles: laneMiles(regionKey(shipment.origin), regionKey(shipment.destination)),
+      estimatedMiles: placeMiles(shipment.origin, shipment.destination),
       quoteCount: store.listQuotesForShipment(shipment.id).length,
       myQuote: myQuote
         ? {
@@ -125,7 +125,7 @@ function matchesFilters(shipment: Shipment, filters: OpportunityFilters): boolea
       return false;
   }
   if (filters.maxMiles !== null) {
-    const miles = laneMiles(origin, destination);
+    const miles = placeMiles(shipment.origin, shipment.destination);
     if (miles !== null && miles > filters.maxMiles) return false;
   }
   return true;

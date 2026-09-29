@@ -6,7 +6,7 @@
  * a made-up band presented as market data is the fastest way to lose a carrier.
  */
 
-import { laneMiles, regionKey } from "./geo.ts";
+import { placeMiles, regionKey } from "./geo.ts";
 import type { EquipmentType, Shipment } from "./types.ts";
 
 export type RateBand = {
@@ -56,7 +56,7 @@ export type ComparableAward = {
 export function suggestRate(shipment: Shipment, comparables: ComparableAward[]): RateBand {
   const origin = regionKey(shipment.origin);
   const destination = regionKey(shipment.destination);
-  const miles = laneMiles(origin, destination);
+  const miles = placeMiles(shipment.origin, shipment.destination);
 
   const onLane = comparables.filter(
     (award) =>

@@ -1,2 +1,4 @@
-data/
+# The runtime SQLite database lives at the project root; web/data is the
+# committed basemap, so this pattern is deliberately root-anchored.
+/data/
 node_modules/

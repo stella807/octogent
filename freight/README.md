@@ -39,7 +39,7 @@ withdraw, and update the load's status through to delivery.
 company can read, and see platform totals.
 
 **Everyone lands on the command floor** — one live read of the book, scoped to
-who is looking.
+who is looking — and the **lane map** shows where that book's freight is going.
 
 ## The command floor
 
@@ -75,6 +75,41 @@ inline styles, so the same `default-src 'self'` policy covers the dashboard.
 Chart colours are steps from one blue ramp, validated against both surfaces
 (light `#256abf`, dark `#3987e5`, each clearing 3:1) rather than picked by eye;
 stations encode *state* (live or idle), not six competing hues.
+
+## The lane map
+
+A map of the lanes this book runs: great-circle arcs between real coordinates,
+line weight carrying shipment count, pins showing which end is pickup and which
+is delivery, and a stage filter over the whole view. Selecting a lane opens its
+shipments; every one of them links through to the shipment itself.
+
+It is deliberately a map of **lanes, not vehicles**:
+
+- **Nothing moves on it.** A load in transit is a stage on a lane, not a dot
+  crossing the Caribbean. Real position tracking needs AIS for the ocean legs
+  or an ELD/telematics feed for the drayage, and this platform has neither — so
+  it draws what it knows and says what it does not.
+- **Arcs are great-circle paths**, the shortest line over the globe between two
+  points. They are not routed roads and not published sea lanes, and the map
+  says so under itself.
+- **Coordinates state their own precision.** `src/domain/geo.ts` carries a
+  bounded gazetteer of the ports and freight cities this marketplace serves, so
+  Miami and Jacksonville are different pins rather than one Florida centroid. A
+  city that is not in the table falls back to its region centroid, and that pin
+  is drawn as a soft disc and labelled "(region)" instead of pretending to a
+  precision it does not have.
+- **One mileage number in the whole product.** `placeMiles` resolves both ends
+  through the gazetteer and is what the rate band, the match score, the
+  shipment page and the map all read — so Jacksonville→San Juan can no longer
+  report the same distance as Miami→San Juan.
+- **The map has a table twin.** Every lane, count, stage breakdown, value and
+  distance is in a table under it; lanes are keyboard-reachable with a hit
+  target wide enough to actually hit.
+
+The basemap is Natural Earth 1:50m land (public domain, via `world-atlas`),
+clipped to the served corridor and simplified to about 5 km — 23 KB of plain
+coordinates in `web/data/land.json`, drawn as SVG paths. No tile server, no map
+library, no key, and no requests leaving the page.
 
 ## The matching engine
 
@@ -132,6 +167,8 @@ src/ports/      The persistence interface the app layer talks to
 src/adapters/   SQLite implementation of that port, plus the SQL schema
 src/http/       Router, cookies/CSRF, static files — transport only
 src/app/floor.ts  The command floor's view model, scoped per role
+src/app/lanes.ts  The lane map's view model: shipments grouped into lanes
+web/data/        The basemap: Natural Earth land, clipped and simplified
 src/security/   scrypt password hashing, session and CSRF tokens
 web/            Browser client: no build step, no framework, no CDN
 test/           Domain tests plus end-to-end tests over real HTTP
@@ -159,7 +196,7 @@ Postgres adapter is a new file, not a rewrite.
 Everything below the line is *not* built, and nothing in the product pretends
 otherwise on screen.
 
-**Implemented and working:** the command floor, accounts and companies, roles
+**Implemented and working:** the command floor, the lane map, accounts and companies, roles
 (shipper, supplier, admin), sessions, supplier capability profiles, shipment posting with
 marketplace or invite-only visibility, eligibility and scored matching with
 factor-level explanations, opportunity board with filters, quoting,
@@ -171,7 +208,7 @@ statistics, rate guidance from platform history where it exists.
 
 | Area | What exists now | What it needs |
 | --- | --- | --- |
-| Distance and routing | Region-centroid great-circle miles, inflated for road circuity, labelled an estimate everywhere | A routing/geocoding provider for door-to-door mileage |
+| Distance and routing | Great-circle miles between gazetteer coordinates — city-level where the city is known, region centroid where it is not — labelled an estimate everywhere | A routing/geocoding provider for door-to-door mileage and real road/sea paths |
 | Rate guidance | Platform awards on the lane when there are ≥3; otherwise a coarse per-mile or flat ocean-lane placeholder, labelled "not market data" | A market rate API |
 | Identity and authority | MC/DOT numbers recorded as entered, reviewed by an admin | FMCSA (or local equivalent) lookup |
 | Insurance | An expiry date field and an admin note | Certificate ingestion and monitoring |
