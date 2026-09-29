@@ -59,6 +59,11 @@ export interface WalkForwardResult {
    * contact with unseen data.
    */
   readonly efficiency: number;
+  /**
+   * Folds the efficiency average is actually built from (those with a
+   * positive in-sample score). An efficiency from one fold is an anecdote.
+   */
+  readonly efficiencyFolds: number;
 }
 
 export function walkForward(
@@ -184,6 +189,7 @@ export function walkForward(
     stitchedTrades,
     outOfSampleMetrics: computeMetrics(stitched),
     efficiency: efficiencyCount > 0 ? efficiencySum / efficiencyCount : 0,
+    efficiencyFolds: efficiencyCount,
   };
 }
 

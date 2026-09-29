@@ -21,7 +21,7 @@ import type { Params } from './strategy/types.ts';
 import { PaperBroker, readPaperAccount } from './live/paper-broker.ts';
 import { StateStore } from './live/state-store.ts';
 import { formatPaperStatus, paperAccountPath, paperStatus } from './live/status.ts';
-import { DEFAULT_SCREEN, failed as failedScreen, screenSymbol, type ScreenCriteria, type ScreenRow } from './backtest/screen.ts';
+import { DEFAULT_SCREEN, failed as failedScreen, screenSymbol, shuffleBars, type ScreenCriteria, type ScreenRow } from './backtest/screen.ts';
 import { formatScreen, readScreenFile, screenPath, writeScreenFile } from './screen-file.ts';
 import { ExchangeBroker, LIVE_CONFIRM_ENV, LIVE_CONFIRM_VALUE } from './live/exchange-broker.ts';
 import { LiveRunner } from './live/runner.ts';
@@ -66,6 +66,8 @@ Common
   --quote USD            screen: which markets to test when --symbols is not given
   --min-trades 10        screen: out-of-sample trades a pass needs
   --min-efficiency 0.5   screen: walk-forward efficiency a pass needs
+  --min-folds 3          screen: walk-forward folds that efficiency must be averaged over
+  --control              screen: also screen every market with its days shuffled, to count passes due to luck
   --concurrency 8        screen: markets fetched at once (one shared, rate-limited connection)
   --horizon 1            swarm: bars ahead to forecast
   --paths 500            swarm: simulated futures per forecast (horizon > 1)
@@ -103,10 +105,12 @@ export async function main(argv: readonly string[]): Promise<number> {
       quote: { type: 'string', default: 'USD' },
       'min-trades': { type: 'string', default: String(DEFAULT_SCREEN.minTrades) },
       'min-efficiency': { type: 'string', default: String(DEFAULT_SCREEN.minEfficiency) },
+      'min-folds': { type: 'string', default: String(DEFAULT_SCREEN.minFolds) },
       concurrency: { type: 'string', default: '8' },
       horizon: { type: 'string', default: '1' },
       paths: { type: 'string', default: String(DEFAULT_SWARM.paths) },
       evaluate: { type: 'boolean', default: false },
+      control: { type: 'boolean', default: false },
       strategies: { type: 'string' },
       weights: { type: 'string' },
       exchange: { type: 'string', default: 'binance' },
@@ -432,6 +436,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       const criteria: ScreenCriteria = {
         minEfficiency: num(values['min-efficiency'], 'min-efficiency'),
         minTrades: Math.trunc(num(values['min-trades'], 'min-trades')),
+        minFolds: Math.trunc(num(values['min-folds'], 'min-folds')),
       };
       const wfOptions = {
         ...DEFAULT_WF_OPTIONS,
@@ -441,31 +446,44 @@ export async function main(argv: readonly string[]): Promise<number> {
       };
       let done = 0;
       const started = Date.now();
-      const rows: ScreenRow[] = await mapPool(
+      const control = values.control as boolean;
+      const results = await mapPool(
         universe,
         Math.trunc(num(values.concurrency, 'concurrency')),
-        async (symbol, i): Promise<ScreenRow> => {
+        async (symbol, i): Promise<{ row: ScreenRow; shuffled: ScreenRow | null }> => {
           let row: ScreenRow;
+          let shuffled: ScreenRow | null = null;
           try {
             const candles = await loadCandles({
               csv: undefined, synthetic: values.synthetic as boolean, symbol, exchange, timeframe, bars, range,
               seed: Math.trunc(num(values.seed, 'seed')) + i,
             });
             row = screenSymbol(symbol, candles, factory, wfOptions, criteria);
+            if (control) shuffled = screenSymbol(symbol, shuffleBars(candles, i + 1), factory, wfOptions, criteria);
           } catch (error) {
             row = failedScreen(symbol, 0, `no data: ${error instanceof Error ? error.message : String(error)}`);
           }
           done += 1;
           process.stderr.write(`[${done}/${universe.length}] ${symbol} (${((Date.now() - started) / 1000).toFixed(0)}s)\n`);
-          return row;
+          return { row, shuffled };
         },
       );
+      const rows = results.map((r) => r.row);
+      const controlRows = results.flatMap((r) => (r.shuffled ? [r.shuffled] : []));
+      const luck = control
+        // Same denominator as the real screen: markets with enough data to test.
+        ? {
+          tested: controlRows.filter((r) => r.efficiency !== null || r.oosTrades > 0).length,
+          passed: controlRows.filter((r) => r.passed).length,
+        }
+        : undefined;
       const passed = rows.filter((r) => r.passed).map((r) => r.symbol);
       await writeScreenFile(screenPath(values.state as string), {
         exchange, strategy: factory.name, timeframe, screenedAt: new Date().toISOString(), symbols: passed, rows,
+        ...(luck ? { luck } : {}),
       });
-      if (values.json) emit(rows);
-      else process.stdout.write(`${formatScreen(rows, factory.name, exchange)}\n`);
+      if (values.json) emit({ rows, luck });
+      else process.stdout.write(`${formatScreen(rows, factory.name, exchange, luck)}\n`);
       return 0;
     }
 
