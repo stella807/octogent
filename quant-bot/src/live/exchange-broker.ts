@@ -9,7 +9,8 @@ export interface ExchangeBrokerOptions {
   /** Read from the environment by `fromEnv`; never hardcode or log these. */
   readonly apiKey: string;
   readonly secret: string;
-  readonly quoteCurrency: string;
+  /** Injectable for tests; production connects through ccxt on first use. */
+  readonly client?: CcxtClient;
 }
 
 /**
@@ -24,7 +25,6 @@ export interface ExchangeBrokerOptions {
 export class ExchangeBroker implements Broker {
   readonly id: string;
   readonly isLive = true;
-  readonly #quote: string;
   #client: CcxtClient | null = null;
   readonly #options: ExchangeBrokerOptions;
 
@@ -38,7 +38,7 @@ export class ExchangeBroker implements Broker {
       throw new Error('live trading needs API credentials; see .env.example');
     }
     this.#options = options;
-    this.#quote = options.quoteCurrency;
+    this.#client = options.client ?? null;
     this.id = `live:${options.exchange}`;
   }
 
@@ -46,21 +46,23 @@ export class ExchangeBroker implements Broker {
    * Builds from environment variables so credentials never enter argv, where
    * they would be visible in shell history and in `ps` output.
    */
-  static fromEnv(exchange: string, quoteCurrency = 'USDT'): ExchangeBroker {
+  static fromEnv(exchange: string): ExchangeBroker {
     return new ExchangeBroker({
       exchange,
       apiKey: process.env['QUANT_BOT_API_KEY'] ?? '',
       secret: process.env['QUANT_BOT_API_SECRET'] ?? '',
-      quoteCurrency,
     });
   }
 
   async balance(symbol: string): Promise<Balance> {
     const client = await this.#connect();
     const balances = await client.fetchBalance();
-    const base = symbol.split('/')[0] ?? '';
+    // Both sides come from the symbol being traded. A fixed quote currency
+    // reads the wrong balance on any venue that does not use it: on Coinbase
+    // BTC/USD, a USDT default reports $0 cash and every order sizes to zero.
+    const [base = '', quote = ''] = symbol.split('/');
     return {
-      cash: Number(balances.free?.[this.#quote] ?? 0),
+      cash: Number(balances.free?.[quote] ?? 0),
       qty: Number(balances.free?.[base] ?? 0),
     };
   }
@@ -129,7 +131,7 @@ interface CcxtOrder {
   readonly timestamp?: number;
 }
 
-interface CcxtClient {
+export interface CcxtClient {
   fetchBalance(): Promise<{ free?: Record<string, number> }>;
   fetchTicker(symbol: string): Promise<{ last?: number; close?: number }>;
   fetchOHLCV(symbol: string, timeframe: string, since?: number, limit?: number): Promise<(number | undefined)[][]>;
