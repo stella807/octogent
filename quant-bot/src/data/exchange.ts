@@ -14,6 +14,13 @@ export interface FetchOptions {
   /** Maximum bars to fetch. Acts as a safety cap when a date range is given. */
   readonly bars: number;
   readonly cacheDir: string;
+  /**
+   * Skips the on-disk cache entirely. A backtest wants a pinned, reproducible
+   * snapshot; a live poll calls with the same (exchange, symbol, timeframe, bars)
+   * key on every tick and needs the newest bar each time, so caching that call
+   * would freeze it on whatever it first downloaded.
+   */
+  readonly noCache?: boolean;
 }
 
 export const DEFAULT_FETCH: Omit<FetchOptions, 'symbol'> = {
@@ -32,14 +39,21 @@ export const DEFAULT_FETCH: Omit<FetchOptions, 'symbol'> = {
  * daily bars on every backtest is how you get rate limited, and because a
  * pinned local file is what makes a reported result reproducible later.
  */
-export async function fetchCandles(options: FetchOptions): Promise<Candle[]> {
+export async function fetchCandles(
+  options: FetchOptions,
+  download: (options: FetchOptions) => Promise<Candle[]> = downloadCandles,
+): Promise<Candle[]> {
   const cachePath = cacheFile(options);
-  const cached = await readCache(cachePath);
-  if (cached) return cached;
+  if (!options.noCache) {
+    const cached = await readCache(cachePath);
+    if (cached) return cached;
+  }
 
-  const candles = await downloadCandles(options);
-  await mkdir(dirname(cachePath), { recursive: true });
-  await writeFile(cachePath, JSON.stringify(candles), 'utf8');
+  const candles = await download(options);
+  if (!options.noCache) {
+    await mkdir(dirname(cachePath), { recursive: true });
+    await writeFile(cachePath, JSON.stringify(candles), 'utf8');
+  }
   return candles;
 }
 

@@ -362,7 +362,7 @@ export async function main(argv: readonly string[]): Promise<number> {
           startingCash: config.startingEquity,
           costs: config.costs,
           feed: (sym, tf, count) => fetchCandles({
-            exchange, symbol: sym, timeframe: tf, bars: count, cacheDir: 'data/cache',
+            exchange, symbol: sym, timeframe: tf, bars: count, cacheDir: 'data/cache', noCache: true,
           }),
         });
 

@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseCsv } from '../src/data/csv.ts';
+import { fetchCandles, type FetchOptions } from '../src/data/exchange.ts';
 import { generateCandles } from '../src/data/synthetic.ts';
+import type { Candle } from '../src/domain/types.ts';
 
 describe('parseCsv', () => {
   it('accepts a header row and epoch-second timestamps', () => {
@@ -46,6 +51,61 @@ describe('parseCsv', () => {
 1704067200,100,110,90,105,1
 `);
     expect(candles).toHaveLength(1);
+  });
+});
+
+describe('fetchCandles caching', () => {
+  let cacheDir: string;
+
+  beforeEach(async () => {
+    cacheDir = await mkdtemp(join(tmpdir(), 'quant-bot-cache-'));
+  });
+
+  afterEach(async () => {
+    await rm(cacheDir, { recursive: true, force: true });
+  });
+
+  const baseOptions: Omit<FetchOptions, 'cacheDir'> = {
+    exchange: 'coinbase',
+    symbol: 'BTC/USD',
+    timeframe: '1h',
+    bars: 5,
+  };
+
+  function fakeDownload(candles: Candle[]) {
+    let calls = 0;
+    return {
+      download: async () => {
+        calls += 1;
+        return candles;
+      },
+      calls: () => calls,
+    };
+  }
+
+  it('reuses the on-disk cache by default, so a backtest snapshot stays reproducible', async () => {
+    const first = fakeDownload([{ time: 1, open: 1, high: 1, low: 1, close: 1, volume: 1 }]);
+    await fetchCandles({ ...baseOptions, cacheDir }, first.download);
+    expect(first.calls()).toBe(1);
+
+    // A second call with a *different* downloader must still return the cached
+    // result and never invoke this one, proving the cache was actually hit.
+    const second = fakeDownload([{ time: 2, open: 2, high: 2, low: 2, close: 2, volume: 2 }]);
+    const result = await fetchCandles({ ...baseOptions, cacheDir }, second.download);
+    expect(second.calls()).toBe(0);
+    expect(result[0]?.time).toBe(1);
+  });
+
+  it('bypasses the cache with noCache: true, so a live poll always sees fresh data', async () => {
+    const first = fakeDownload([{ time: 1, open: 1, high: 1, low: 1, close: 1, volume: 1 }]);
+    await fetchCandles({ ...baseOptions, cacheDir, noCache: true }, first.download);
+
+    // Same (exchange, symbol, timeframe, bars) key as a real live poll reuses —
+    // must call the downloader again instead of returning the first result.
+    const second = fakeDownload([{ time: 2, open: 2, high: 2, low: 2, close: 2, volume: 2 }]);
+    const result = await fetchCandles({ ...baseOptions, cacheDir, noCache: true }, second.download);
+    expect(second.calls()).toBe(1);
+    expect(result[0]?.time).toBe(2);
   });
 });
 
