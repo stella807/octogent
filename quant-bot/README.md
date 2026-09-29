@@ -320,6 +320,20 @@ container comes straight back, and a kill switch that reset on restart would be
 no kill switch at all. A tripped halt stays tripped until a human deletes the
 state file.
 
+The simulated account survives restarts too. Cash, holdings and every fill
+are saved to `paper-account.json` next to the runner state, so a restart
+resumes the same account instead of silently re-funding it. To see where it
+stands:
+
+```bash
+pnpm cli status --exchange coinbase --symbol BTC/USD
+```
+
+That prints equity, profit/loss since the start, fees paid, and any open
+position marked to the current price. Use the same `--exchange`, `--symbol`
+and `--state` as the `paper` run. To start over from scratch, delete both
+`runner-state.json` and `paper-account.json`.
+
 The image runs as an unprivileged user and contains no credentials. Live
 trading still requires `--live` and `QUANT_BOT_LIVE_CONFIRM`, neither of which
 is baked in.

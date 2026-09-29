@@ -1,3 +1,5 @@
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import type { Candle, Timeframe } from '../domain/types.ts';
 import { buyFillPrice, DEFAULT_COSTS, feeOn, sellFillPrice, type CostModel } from '../backtest/costs.ts';
 import type { Balance, Broker, Fill } from './broker.ts';
@@ -7,6 +9,20 @@ export interface PaperBrokerOptions {
   readonly costs: CostModel;
   /** Supplies real market data; only the fills are simulated. */
   readonly feed: (symbol: string, timeframe: Timeframe, bars: number) => Promise<Candle[]>;
+  /**
+   * Where the simulated account lives between runs. Without it the account
+   * is in memory only, and a restart silently resets it to `startingCash` —
+   * losing the P&L history and orphaning any open position.
+   */
+  readonly accountPath?: string;
+}
+
+/** The persisted simulated account; also what `status` reads to report P&L. */
+export interface PaperAccount {
+  readonly startingCash: number;
+  readonly cash: number;
+  readonly qty: number;
+  readonly fills: readonly Fill[];
 }
 
 /**
@@ -23,18 +39,24 @@ export class PaperBroker implements Broker {
   readonly isLive = false;
   readonly fills: Fill[] = [];
 
+  #startingCash: number;
   #cash: number;
   #qty = 0;
   readonly #costs: CostModel;
   readonly #feed: PaperBrokerOptions['feed'];
+  readonly #accountPath: string | undefined;
+  #loaded: Promise<void> | null = null;
 
   constructor(options: PaperBrokerOptions) {
+    this.#startingCash = options.startingCash;
     this.#cash = options.startingCash;
     this.#costs = options.costs ?? DEFAULT_COSTS;
     this.#feed = options.feed;
+    this.#accountPath = options.accountPath;
   }
 
   async balance(_symbol?: string): Promise<Balance> {
+    await this.#load();
     return { cash: this.#cash, qty: this.#qty };
   }
 
@@ -50,6 +72,7 @@ export class PaperBroker implements Broker {
   }
 
   async marketBuy(symbol: string, quoteAmount: number): Promise<Fill> {
+    await this.#load();
     const price = buyFillPrice(await this.lastPrice(symbol), this.#costs);
     const spend = Math.min(quoteAmount, this.#cash);
     const fee = feeOn(spend, this.#costs);
@@ -61,6 +84,7 @@ export class PaperBroker implements Broker {
   }
 
   async marketSell(symbol: string, qty: number): Promise<Fill> {
+    await this.#load();
     const sellQty = Math.min(qty, this.#qty);
     if (sellQty <= 0) throw new Error(`no ${symbol} position to sell`);
     const price = sellFillPrice(await this.lastPrice(symbol), this.#costs);
@@ -71,8 +95,59 @@ export class PaperBroker implements Broker {
     return this.#record({ side: 'sell', qty: sellQty, price, fee, time: Date.now() });
   }
 
-  #record(fill: Fill): Fill {
+  async #record(fill: Fill): Promise<Fill> {
     this.fills.push(fill);
+    await this.#save();
     return fill;
+  }
+
+  #load(): Promise<void> {
+    this.#loaded ??= (async () => {
+      if (!this.#accountPath) return;
+      const account = await readPaperAccount(this.#accountPath);
+      if (!account) {
+        // Write the opening balance now, so `status` works before the first trade.
+        await this.#save();
+        return;
+      }
+      // The saved account wins over --equity: resuming a run must not quietly
+      // re-fund it, or restarts would turn every loss back into fresh cash.
+      this.#startingCash = account.startingCash;
+      this.#cash = account.cash;
+      this.#qty = account.qty;
+      this.fills.push(...account.fills);
+    })();
+    return this.#loaded;
+  }
+
+  async #save(): Promise<void> {
+    if (!this.#accountPath) return;
+    const account: PaperAccount = {
+      startingCash: this.#startingCash,
+      cash: this.#cash,
+      qty: this.#qty,
+      fills: this.fills,
+    };
+    await mkdir(dirname(this.#accountPath), { recursive: true });
+    // Write-then-rename, so a crash mid-write leaves the previous account
+    // intact rather than a truncated file that loads as a fresh one.
+    const tmp = `${this.#accountPath}.tmp`;
+    await writeFile(tmp, JSON.stringify(account, null, 2), 'utf8');
+    await rename(tmp, this.#accountPath);
+  }
+}
+
+export async function readPaperAccount(path: string): Promise<PaperAccount | null> {
+  try {
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<PaperAccount>;
+    if (typeof parsed.cash !== 'number' || typeof parsed.qty !== 'number') return null;
+    return {
+      startingCash: parsed.startingCash ?? parsed.cash,
+      cash: parsed.cash,
+      qty: parsed.qty,
+      fills: parsed.fills ?? [],
+    };
+  } catch {
+    return null;
   }
 }

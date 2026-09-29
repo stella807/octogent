@@ -14,7 +14,9 @@ import { BENCHMARK_LIMITS, CONSERVATIVE_LIMITS, DEFAULT_LIMITS, type RiskLimits 
 import { formatBacktest, formatMonteCarlo, formatPortfolio, formatSearch, formatWalkForward } from './report.ts';
 import { buyAndHold, getStrategy, STRATEGIES } from './strategy/index.ts';
 import type { Params } from './strategy/types.ts';
-import { PaperBroker } from './live/paper-broker.ts';
+import { PaperBroker, readPaperAccount } from './live/paper-broker.ts';
+import { StateStore } from './live/state-store.ts';
+import { formatPaperStatus, paperAccountPath, paperStatus } from './live/status.ts';
 import { ExchangeBroker, LIVE_CONFIRM_ENV, LIVE_CONFIRM_VALUE } from './live/exchange-broker.ts';
 import { LiveRunner } from './live/runner.ts';
 import { TelegramNotifier } from './live/notifier.ts';
@@ -37,6 +39,7 @@ quant-bot — crypto strategy research and paper trading
   walkforward  Pick parameters out-of-sample and report what survived
   montecarlo   Resample trade order to show the real spread of outcomes
   paper        Trade live market data with simulated fills (no real money)
+  status       Paper account profit/loss and open position (same --exchange/--symbol/--state as paper)
   live         Trade real funds. Requires --live and ${LIVE_CONFIRM_ENV}=${LIVE_CONFIRM_VALUE}
 
 Data (pick one; defaults to --synthetic so it runs with no network)
@@ -350,6 +353,31 @@ export async function main(argv: readonly string[]): Promise<number> {
       return 0;
     }
 
+    case 'status': {
+      const statePath = values.state as string;
+      const accountPath = paperAccountPath(statePath);
+      const account = await readPaperAccount(accountPath);
+      if (!account) {
+        process.stderr.write(`No paper account at ${accountPath}. Start one with the \`paper\` command.\n`);
+        return 1;
+      }
+      const state = await new StateStore(statePath).load();
+      const symbol = values.symbol as string;
+      let price: number | null = null;
+      try {
+        const recent = await fetchCandles({
+          exchange: values.exchange as string, symbol, timeframe: '1m', bars: 2, cacheDir: 'data/cache', noCache: true,
+        });
+        price = recent[recent.length - 1]?.close ?? null;
+      } catch {
+        // Offline still reports cash-based P&L; the report says the position is unmarked.
+      }
+      const summary = paperStatus(account, state, price);
+      if (values.json) emit(summary);
+      else process.stdout.write(`${formatPaperStatus(summary, symbol)}\n`);
+      return 0;
+    }
+
     case 'paper':
     case 'live': {
       const factory = getStrategy(values.strategy as string);
@@ -362,6 +390,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         : new PaperBroker({
           startingCash: config.startingEquity,
           costs: config.costs,
+          accountPath: paperAccountPath(values.state as string),
           feed: (sym, tf, count) => fetchCandles({
             exchange, symbol: sym, timeframe: tf, bars: count, cacheDir: 'data/cache', noCache: true,
           }),

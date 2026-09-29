@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Candle, Timeframe } from '../src/domain/types.ts';
 import { DEFAULT_COSTS, FRICTIONLESS } from '../src/backtest/costs.ts';
 import { PaperBroker } from '../src/live/paper-broker.ts';
+import { paperAccountPath, paperStatus, formatPaperStatus } from '../src/live/status.ts';
+import { EMPTY_STATE } from '../src/live/state-store.ts';
 import { dropFormingBar, LiveRunner } from '../src/live/runner.ts';
 import { StateStore } from '../src/live/state-store.ts';
-import { ExchangeBroker, LIVE_CONFIRM_ENV } from '../src/live/exchange-broker.ts';
+import { ExchangeBroker, LIVE_CONFIRM_ENV, type CcxtClient } from '../src/live/exchange-broker.ts';
 import { NoopNotifier, TelegramNotifier, type Notifier } from '../src/live/notifier.ts';
 import { DEFAULT_LIMITS, BENCHMARK_LIMITS } from '../src/risk/risk-manager.ts';
 import { buyAndHold } from '../src/strategy/index.ts';
@@ -61,6 +63,106 @@ describe('PaperBroker', () => {
 
   it('reports itself as not live, which the runner announces', () => {
     expect(new PaperBroker({ startingCash: 1, costs: FRICTIONLESS, feed }).isLive).toBe(false);
+  });
+});
+
+describe('PaperBroker persistence', () => {
+  const feed = async (): Promise<Candle[]> => series([100, 100], 0);
+  let dir: string;
+  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'quant-bot-paper-')); });
+  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  it('survives a restart with cash, holdings and fill history intact', async () => {
+    const accountPath = join(dir, 'paper-account.json');
+    const first = new PaperBroker({ startingCash: 25, costs: FRICTIONLESS, feed, accountPath });
+    await first.marketBuy('BTC/USD', 10);
+
+    // A new process, even one launched with a different --equity, resumes
+    // the saved account rather than re-funding it.
+    const restarted = new PaperBroker({ startingCash: 1_000, costs: FRICTIONLESS, feed, accountPath });
+    const balance = await restarted.balance('BTC/USD');
+    expect(balance.cash).toBeCloseTo(15, 9);
+    expect(balance.qty).toBeCloseTo(0.1, 9);
+    expect(restarted.fills).toHaveLength(1);
+
+    await restarted.marketSell('BTC/USD', balance.qty);
+    const saved = JSON.parse(await readFile(accountPath, 'utf8')) as { startingCash: number; fills: unknown[] };
+    expect(saved.startingCash).toBe(25);
+    expect(saved.fills).toHaveLength(2);
+  });
+
+  it('writes the opening balance before any trade, so status works immediately', async () => {
+    const accountPath = join(dir, 'paper-account.json');
+    await new PaperBroker({ startingCash: 25, costs: FRICTIONLESS, feed, accountPath }).balance('BTC/USD');
+    const saved = JSON.parse(await readFile(accountPath, 'utf8')) as { cash: number; fills: unknown[] };
+    expect(saved.cash).toBe(25);
+    expect(saved.fills).toHaveLength(0);
+  });
+
+  it('keeps the old in-memory behaviour when no account path is given', async () => {
+    const broker = new PaperBroker({ startingCash: 25, costs: FRICTIONLESS, feed });
+    await broker.marketBuy('BTC/USD', 10);
+    expect((await broker.balance('BTC/USD')).cash).toBeCloseTo(15, 9);
+  });
+});
+
+describe('ExchangeBroker balances', () => {
+  const original = process.env[LIVE_CONFIRM_ENV];
+  afterEach(() => {
+    if (original === undefined) delete process.env[LIVE_CONFIRM_ENV];
+    else process.env[LIVE_CONFIRM_ENV] = original;
+  });
+
+  it('reads cash in the quote currency of the symbol traded, not a fixed USDT', async () => {
+    process.env[LIVE_CONFIRM_ENV] = 'yes-i-accept-the-risk';
+    const unused = async (): Promise<never> => { throw new Error('not used in this test'); };
+    const client: CcxtClient = {
+      fetchBalance: async () => ({ free: { USD: 25, USDT: 0, BTC: 0.001 } }),
+      fetchTicker: unused,
+      fetchOHLCV: unused,
+      createMarketBuyOrder: unused,
+      createMarketSellOrder: unused,
+    };
+    const broker = new ExchangeBroker({ exchange: 'coinbase', apiKey: 'k', secret: 's', client });
+    expect(await broker.balance('BTC/USD')).toEqual({ cash: 25, qty: 0.001 });
+  });
+});
+
+describe('paper status', () => {
+  const account = (over: Partial<{ cash: number; qty: number }>) => ({
+    startingCash: 25,
+    cash: 25,
+    qty: 0,
+    fills: [] as { side: 'buy' | 'sell'; qty: number; price: number; fee: number; time: number }[],
+    ...over,
+  });
+
+  it('reports profit on a flat account from cash alone', () => {
+    const s = paperStatus(account({ cash: 27.5 }), { ...EMPTY_STATE }, null);
+    expect(s.pnl).toBeCloseTo(2.5, 9);
+    expect(s.pnlPct).toBeCloseTo(10, 9);
+    expect(s.open).toBeNull();
+  });
+
+  it('marks an open position to the current price and shows unrealized P&L', () => {
+    const s = paperStatus(
+      account({ cash: 15, qty: 0.1 }),
+      { ...EMPTY_STATE, entryPrice: 100, stopPrice: 90 },
+      110,
+    );
+    expect(s.equity).toBeCloseTo(26, 9);
+    expect(s.open?.unrealized).toBeCloseTo(1, 9);
+    expect(formatPaperStatus(s, 'BTC/USD')).toMatch(/Unrealized\s+\+\$1\.00/);
+  });
+
+  it('says so instead of guessing when the price is unavailable', () => {
+    const s = paperStatus(account({ cash: 15, qty: 0.1 }), { ...EMPTY_STATE, entryPrice: 100 }, null);
+    expect(s.open?.unrealized).toBeNull();
+    expect(formatPaperStatus(s, 'BTC/USD')).toMatch(/not marked/);
+  });
+
+  it('keeps the account next to the runner state', () => {
+    expect(paperAccountPath('.quant-bot/runner-state.json')).toBe(join('.quant-bot', 'paper-account.json'));
   });
 });
 
