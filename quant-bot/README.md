@@ -900,6 +900,30 @@ Buying dips does not, and at $2.50 a bot its orders would not even clear
 the $1 minimum. `fleet-add` now refuses bots that could never place an
 order.
 
+**Whale tracking (Arkham Intelligence).** `trend-hold-whales` is
+trend-hold with one on-chain rule: no new entry while whales, meaning
+transfers of at least `--min-usd` (default $1M), have been net sending the
+coin to exchanges over the last 7 days. Coins moving onto exchanges are
+usually about to be sold. The data comes from Arkham's API, which needs a
+key (apply at arkm.com). The key is read only from `ARKHAM_API_KEY` and sent
+as a header, never in a URL or on the command line. The response format was
+written from Arkham's documentation without a key to confirm it, so parsing
+is strict: anything unexpected stops with an error naming what arrived.
+
+```powershell
+$env:ARKHAM_API_KEY = Read-Host -AsSecureString "Arkham API key" | ConvertFrom-SecureString -AsPlainText
+node --experimental-strip-types src/cli.ts whales --exchange coinbase --symbol ETH/USD
+node --experimental-strip-types src/cli.ts whales --exchange coinbase --symbols ETH/USD,BTC/USD,SOL/USD,XRP/USD,UNI/USD,ZEC/USD,XLM/USD,DOGE/USD,LINK/USD
+```
+
+The first command shows 14 days of whale flows, to check that the data
+looks right. The second is the vote. It walk-forward tests trend-hold-whales
+against plain trend-hold on each coin over 3 years, and repeats the test with
+the whale series shuffled, which is what whale data adds by luck. The filter
+earns a place only if its consensus is worthy and it beats trend-hold on
+most coins. Until then the fleet keeps trend-hold. With no whale data,
+trend-hold-whales trades exactly like trend-hold.
+
 **TradingView data.** TradingView has no public data API, and the
 unofficial scrapers break its terms, so the fleet does not pull from it. Its
 `COINBASE:` charts show Coinbase's own feed, which is what the bots already

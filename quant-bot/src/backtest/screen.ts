@@ -128,3 +128,18 @@ export function shuffleBars(candles: readonly Candle[], seed: number): Candle[] 
   });
   return out;
 }
+
+/**
+ * A series in random order: the same values, disconnected from the days they
+ * belong to. Running a strategy on real prices with a shuffled side signal
+ * measures what that signal adds by luck alone.
+ */
+export function shuffleSeries<T>(values: readonly T[], seed: number): T[] {
+  const out = [...values];
+  const rand = mulberry32(seed);
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rand() * (i + 1));
+    [out[i], out[j]] = [out[j] as T, out[i] as T];
+  }
+  return out;
+}

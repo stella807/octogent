@@ -13,6 +13,8 @@ export type Params = Readonly<Record<string, number>>;
 export interface StrategyContext {
   /** Aligned 1:1 with the candles passed to `create`; see `alignSentiment`. */
   readonly sentiment?: readonly (number | null)[];
+  /** Net USD whales moved onto exchanges, per bar, lagged a day; see `src/data/arkham.ts`. */
+  readonly whaleNetflow?: readonly (number | null)[];
 }
 
 /**

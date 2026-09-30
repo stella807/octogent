@@ -26,7 +26,7 @@ import { PaperBroker, PRICE_LOOKBACK_MINUTES, readPaperAccount } from './live/pa
 import { StateStore } from './live/state-store.ts';
 import { formatLiveStatus, formatPaperStatus, liveBaselinePath, liveStatus, paperAccountPath, paperStatus, type PaperStatus } from './live/status.ts';
 import { readLiveBaseline, recordLiveBaseline } from './live/baseline.ts';
-import { DEFAULT_SCREEN, failed as failedScreen, screenSymbol, shuffleBars, type ScreenCriteria, type ScreenRow } from './backtest/screen.ts';
+import { DEFAULT_SCREEN, failed as failedScreen, screenSymbol, shuffleBars, shuffleSeries, type ScreenCriteria, type ScreenRow } from './backtest/screen.ts';
 import { formatScreen, readScreenFile, screenPath, writeScreenFile } from './screen-file.ts';
 import { connectReadOnly, ExchangeBroker, LIVE_CONFIRM_ENV, LIVE_CONFIRM_VALUE, readAccount, type AccountSnapshot } from './live/exchange-broker.ts';
 import { LiveRunner } from './live/runner.ts';
@@ -66,6 +66,7 @@ import {
 } from './live/fleet.ts';
 import { alignCandles, alignmentCoverage } from './portfolio/align.ts';
 import { alignSentiment, fetchSentiment } from './data/sentiment.ts';
+import { alignNetflow, arkhamTokenId, loadWhaleFlows } from './data/arkham.ts';
 import type { StrategyContext } from './strategy/types.ts';
 import { runPortfolioBacktest } from './portfolio/engine.ts';
 import { equalWeight, getPortfolioStrategy, PORTFOLIO_STRATEGIES } from './portfolio/index.ts';
@@ -86,6 +87,7 @@ quant-bot — crypto strategy research and paper trading
   fleet-init   Plan a paper fleet of 10 bots sharing --budget (default $250), the rest of the 76-bot plan queued; --size full starts all 76
   fleet        Run every bot in the fleet file at once; adds queued bots as realized profits pay for them
   fleet-status Every fleet bot's profit, grouped, next to its coin-flip control
+  whales       Arkham whale flows (needs ARKHAM_API_KEY): --symbol shows recent exchange netflow; --symbols votes trend-hold-whales vs trend-hold
   fleet-add    Add candidates (--strategy on --symbols) as validators; they trade real money only once the fleet deems them worthy
   status       Paper account profit/loss and every open position; --live reads your real exchange account
   screen       Walk-forward test a strategy on every --quote market of an exchange; keep what passes
@@ -193,10 +195,17 @@ export async function main(argv: readonly string[]): Promise<number> {
       size: { type: 'string', default: 'core' },
       budget: { type: 'string', default: '250' },
       group: { type: 'string', default: 'added' },
+      'arkham-token': { type: 'string' },
+      'min-usd': { type: 'string', default: '1000000' },
     },
   });
 
   const statePath = (values.state as string | undefined) ?? defaultStatePath(command, values.live as boolean);
+  whaleOptions = {
+    symbol: values.symbol as string,
+    token: values['arkham-token'] as string | undefined,
+    minUsd: num(values['min-usd'], 'min-usd'),
+  };
   const timeframe = asTimeframe(values.timeframe as string);
   const limits: RiskLimits = {
     riskPerTradePct: num(values.risk, 'risk'),
@@ -962,6 +971,65 @@ export async function main(argv: readonly string[]): Promise<number> {
       return 0;
     }
 
+    case 'whales': {
+      const minUsd = num(values['min-usd'], 'min-usd');
+      const token = values['arkham-token'] as string | undefined;
+      const exchange = values.exchange as string;
+      if (!values.symbols) {
+        // Probe: one symbol's recent whale flows, to confirm the data looks right before trusting it.
+        const symbol = values.symbol as string;
+        const candles = await fetchCandles({ exchange, symbol, timeframe: '1d', bars: 31, cacheDir: 'data/cache', noCache: true });
+        const flow = await whaleNetflowFor(symbol, candles, token, minUsd);
+        const lines = [`WHALE FLOWS  ${symbol} (Arkham, transfers >= $${(minUsd / 1e6).toFixed(1)}M, net onto exchanges; each day's value is the day before)`];
+        candles.slice(-14).forEach((c, k) => {
+          const v = flow[flow.length - 14 + k];
+          lines.push(`  ${new Date(c.time).toISOString().slice(0, 10)}  ${v === null || v === undefined ? 'unknown' : `${v >= 0 ? '+' : '-'}$${(Math.abs(v) / 1e6).toFixed(1)}M`}`);
+        });
+        const week = flow.slice(-7).filter((v): v is number => v !== null).reduce((a, b) => a + b, 0);
+        lines.push('', `Last 7 days: whales moved $${(Math.abs(week) / 1e6).toFixed(1)}M ${week > 0 ? 'ONTO exchanges (selling pressure: trend-hold-whales would not buy)' : 'off exchanges (holding)'}.`);
+        process.stdout.write(`${lines.join('\n')}\n`);
+        return 0;
+      }
+      // Vote: does whale data improve trend-hold, beyond what shuffled whale data does by luck?
+      const base = getStrategy('trend-hold');
+      const whales = getStrategy('trend-hold-whales');
+      const years = 3;
+      const rows: string[] = [];
+      const votes: Vote[] = [];
+      let better = 0;
+      let compared = 0;
+      for (const symbol of splitSymbols(values.symbols as string)) {
+        try {
+          const candles = await fetchCandles({ exchange, symbol, timeframe: '1d', bars: years * 365, cacheDir: 'data/cache' });
+          const flow = await whaleNetflowFor(symbol, candles, undefined, minUsd);
+          const opts = { ...DEFAULT_WF_OPTIONS, config: { ...config, timeframe: '1d' as const } };
+          const plain = screenSymbol(symbol, candles, base, opts);
+          const real = screenSymbol(symbol, candles, whales, { ...opts, context: { whaleNetflow: flow } });
+          const luck = screenSymbol(symbol, candles, whales, { ...opts, context: { whaleNetflow: shuffleSeries(flow, 1) } });
+          votes.push({ market: symbol, passed: real.passed, luckPassed: luck.passed });
+          const gain = (real.oosReturnPct ?? 0) - (plain.oosReturnPct ?? 0);
+          compared += 1;
+          if (gain > 0) better += 1;
+          rows.push(`  ${symbol.padEnd(10)} trend-hold ${fmtPct(plain.oosReturnPct)}  with whales ${fmtPct(real.oosReturnPct)}  ` +
+            `(shuffled whales ${fmtPct(luck.oosReturnPct)})  ${real.passed ? 'passes' : `fails: ${real.reason}`}`);
+        } catch (error) {
+          rows.push(`  ${symbol.padEnd(10)} skipped: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      const verdict = consensusVerdict(votes);
+      process.stdout.write([
+        `WHALE VOTE  trend-hold-whales vs trend-hold, ${years} years daily, out-of-sample returns`,
+        ...rows,
+        '',
+        `Whales improved the out-of-sample return on ${better} of ${compared} markets.`,
+        `Consensus: ${verdict.approved ? 'WORTHY' : 'not worthy'}, ${describeConsensus(verdict)}.`,
+        verdict.approved && better > compared / 2
+          ? 'The whale filter earns its place; add trend-hold-whales bots with fleet-add.'
+          : 'The whale filter does not beat plain trend-hold by more than luck; the fleet keeps trend-hold.',
+      ].join('\n') + '\n');
+      return 0;
+    }
+
     case 'fleet-add': {
       const fleetPath = values.fleet as string;
       const fleet = parseFleet(await readFile(fleetPath, 'utf8'));
@@ -1236,14 +1304,34 @@ const FINE_GRIDS: Readonly<Record<string, Readonly<Record<string, readonly numbe
 
 /** Strategies whose signal depends on the sentiment side-channel. */
 const SENTIMENT_STRATEGIES = new Set(['donchian-sentiment']);
+/** Strategies whose signal depends on Arkham whale flows. */
+const WHALE_STRATEGIES = new Set(['trend-hold-whales']);
+
+/** Set by `main` from --symbol / --arkham-token / --min-usd for strategies that need whale data. */
+let whaleOptions: { symbol: string; token: string | undefined; minUsd: number } | null = null;
 
 async function loadContext(
   strategyName: string,
   candles: readonly Candle[],
 ): Promise<StrategyContext | undefined> {
-  if (!SENTIMENT_STRATEGIES.has(strategyName)) return undefined;
-  const sentiment = await fetchSentiment();
-  return { sentiment: alignSentiment(candles, sentiment) };
+  if (SENTIMENT_STRATEGIES.has(strategyName)) {
+    const sentiment = await fetchSentiment();
+    return { sentiment: alignSentiment(candles, sentiment) };
+  }
+  if (WHALE_STRATEGIES.has(strategyName) && whaleOptions && candles.length > 0) {
+    return { whaleNetflow: await whaleNetflowFor(whaleOptions.symbol, candles, whaleOptions.token, whaleOptions.minUsd) };
+  }
+  return undefined;
+}
+
+/** Whale netflow aligned to these candles, fetched over exactly their span (cached). */
+async function whaleNetflowFor(symbol: string, candles: readonly Candle[], token: string | undefined, minUsd: number): Promise<(number | null)[]> {
+  const DAY = 86_400_000;
+  // Whole UTC days, from the day before the first bar (its lagged reading) to the last bar's day.
+  const since = Math.floor((candles[0] as Candle).time / DAY) * DAY - DAY;
+  const until = Math.floor((candles[candles.length - 1] as Candle).time / DAY) * DAY;
+  const { flows } = await loadWhaleFlows({ tokenId: arkhamTokenId(symbol, token), since, until, minUsd });
+  return alignNetflow(candles, flows, { from: since, to: until });
 }
 
 
@@ -1329,6 +1417,10 @@ async function fleetFunds(
     });
   }
   return out;
+}
+
+function fmtPct(v: number | null): string {
+  return v === null ? '   n/a' : `${v >= 0 ? '+' : ''}${v.toFixed(0)}%`.padStart(6);
 }
 
 async function exists(path: string): Promise<boolean> {

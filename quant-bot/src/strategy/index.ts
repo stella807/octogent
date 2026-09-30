@@ -14,6 +14,7 @@ import { gridRange } from './grid-range.ts';
 import { dcaSafety } from './dca-safety.ts';
 import { trendHold } from './trend-hold.ts';
 import { coinFlipStrategy } from './coin-flip.ts';
+import { trendHoldWhales } from './trend-hold-whales.ts';
 import type { StrategyFactory } from './types.ts';
 
 export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
@@ -33,6 +34,7 @@ export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
   [dcaSafety.name]: dcaSafety,
   [trendHold.name]: trendHold,
   [coinFlipStrategy.name]: coinFlipStrategy,
+  [trendHoldWhales.name]: trendHoldWhales,
 };
 
 export function getStrategy(name: string): StrategyFactory {
