@@ -977,6 +977,51 @@ validator on BTC, ETH, ZEC, UNI, XLM and VVV, gathering live evidence with
 validator money, and reaches real money only through the existing promotion
 rules.
 
+**Thirteen more strategies, tested (2026-09-30).** `src/strategy/long-flat.ts`
+holds thirteen all-in / all-out daily strategies from different families:
+channel breakout, golden cross, MACD, RSI-in-uptrend, supertrend, ADX, Keltner
+breakout, Bollinger breakout, near-52-week-high, Ichimoku cloud, calm-trend,
+log-price regression, and buy-the-dip-in-an-uptrend. None sets a stop price
+and none scales a position, for the reasons given under trend-hold. Each was
+run through both measures on the fleet's 38 daily markets (0.6% fee):
+
+| Strategy | Fleet vote (passes of 38) | Beats shuffled prices | Profitable out of sample | Median return | Median worst drop | Median trades |
+|---|---|---|---|---|---|---|
+| channel-hold | 0 (not worthy) | 26/38 (luck: 1.68%) | 20/38 | +4% | 33% | 5 |
+| golden-cross | 0 (not worthy) | 15/38 (luck: 92.83%) | 10/38 | +0% | 33% | 2 |
+| macd-hold | 1 (not worthy) | 28/38 (luck: 0.25%) | 15/38 | -7% | 43% | 5 |
+| rsi-trend | 0 (not worthy) | 21/38 (luck: 31.36%) | 19/38 | +6% | 31% | 5 |
+| supertrend-hold | 0 (not worthy) | 25/38 (luck: 3.65%) | 18/38 | -1% | 36% | 5 |
+| adx-trend | 0 (not worthy) | 25/38 (luck: 3.65%) | 17/38 | -9% | 44% | 8 |
+| keltner-hold | 1 (not worthy) | 20/38 (luck: 43.57%) | 14/38 | -15% | 34% | 5 |
+| bollinger-trend | 1 (not worthy) | 25/38 (luck: 3.65%) | 20/38 | +9% | 35% | 6 |
+| high-proximity | 0 (not worthy) | 11/38 (luck: 99.75%) | 8/38 | +0% | 0% | 0 |
+| ichimoku-hold | 2 (not worthy) | 17/38 (luck: 79.12%) | 17/38 | -3% | 36% | 5 |
+| calm-trend | 0 (not worthy) | 19/38 (luck: 56.43%) | 11/38 | +0% | 27% | 2 |
+| regression-trend | 0 (not worthy) | 18/38 (luck: 68.64%) | 10/38 | -8% | 47% | 3 |
+| dip-in-uptrend | 0 (not worthy) | 15/38 (luck: 92.83%) | 7/38 | +0% | 7% | 1 |
+
+With 13 strategies tried at once, about one would look good at a 5% bar by
+pure chance, so the bar here is 0.05 / 13 = 0.38%.
+
+- **None passes the fleet's vote.** The best is `ichimoku-hold` with 2 of 38
+  passes, no better than luck.
+- **Only `macd-hold` clears the stricter shuffled-price bar** (28 of 38, 0.25%),
+  and its median return is -7% with 15 of 38 profitable. It differs from luck
+  but does not make money.
+- **The most promising on plain profit are `bollinger-trend` (+9% median, 20 of
+  38 profitable), `channel-hold` (+4%, 20 of 38) and `rsi-trend` (+6%, 19 of 38).**
+  None survives the correction for trying 13.
+- **Some barely trade.** `high-proximity` (0 median trades), `dip-in-uptrend`
+  (1), `golden-cross` and `calm-trend` (2) need more history than these coins
+  have; the tests cannot judge them.
+- **None beats `trend-vote`** (30 of 38 beat shuffled, +10% median, 36% worst
+  drop) on the same coins.
+
+All thirteen run as validators on BTC and ETH, gathering live evidence with
+validator money. They reach real money only through the fleet's promotion
+rules, which are unchanged.
+
 **TradingView data.** TradingView has no public data API, and the
 unofficial scrapers break its terms, so the fleet does not pull from it. Its
 `COINBASE:` charts show Coinbase's own feed, which is what the bots already

@@ -17,6 +17,7 @@ import { coinFlipStrategy } from './coin-flip.ts';
 import { trendHoldWhales } from './trend-hold-whales.ts';
 import { trendHoldDual, trendHoldSlope, trendHoldTrail } from './trend-hold-variants.ts';
 import { trendVote } from './trend-vote.ts';
+import { LONG_FLAT_STRATEGIES } from './long-flat.ts';
 import type { StrategyFactory } from './types.ts';
 
 export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
@@ -41,6 +42,7 @@ export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
   [trendHoldTrail.name]: trendHoldTrail,
   [trendHoldSlope.name]: trendHoldSlope,
   [trendVote.name]: trendVote,
+  ...Object.fromEntries(LONG_FLAT_STRATEGIES.map((f) => [f.name, f])),
 };
 
 export function getStrategy(name: string): StrategyFactory {
