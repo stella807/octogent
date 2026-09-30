@@ -37,6 +37,7 @@ import {
   demotionReason,
   addValidators,
   botSpec,
+  canTrade,
   DEFAULT_BOT_EQUITY,
   describeConsensus,
   isControl,
@@ -969,14 +970,24 @@ export async function main(argv: readonly string[]): Promise<number> {
       const group = values.group as string;
       const prefix = group.toLowerCase().split(/\s+/)[0]?.replace(/[^a-z0-9]/g, '') || 'added';
       const equity = fleet.bots[0]?.equity ?? DEFAULT_BOT_EQUITY;
-      const candidates = splitSymbols(values.symbols as string)
+      const wanted = splitSymbols(values.symbols as string)
         .map((symbol) => botSpec(group, prefix, factory.name, symbol, timeframe, equity));
+      // A bot whose orders would all fall under the $1 minimum could never trade, even as a validator.
+      const candidates = wanted.filter(canTrade);
+      if (candidates.length < wanted.length) {
+        process.stderr.write(
+          `${factory.name} on ${timeframe} needs about $${minEquityFor(wanted[0] as BotSpec)} per bot for its orders to clear the $1 minimum; ` +
+          `this fleet's bots have $${equity}. Skipped ${wanted.length - candidates.length}.\n`,
+        );
+      }
       const next = addValidators(fleet, candidates);
       await writeFleet(fleetPath, next);
       const added = (next.validators ?? []).length - (fleet.validators ?? []).length;
+      const already = candidates.length - added;
       process.stdout.write(
-        `Added ${added} of ${candidates.length} as validators (the rest are already in the fleet). A running fleet ` +
-        `starts them within the hour; they trade validator money until the fleet deems them worthy.\n`,
+        `Added ${added} of ${wanted.length} as validators${already > 0 ? ` (${already} already in the fleet)` : ''}.` +
+        (added > 0 ? ' A running fleet starts them within the hour; they trade validator money until the fleet deems them worthy.' : '') +
+        '\n',
       );
       return 0;
     }

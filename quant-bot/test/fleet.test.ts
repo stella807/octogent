@@ -116,6 +116,12 @@ describe('a $25 fleet budget', () => {
     expect(bots.some((b) => b.strategy === 'buy-and-hold')).toBe(true);
   });
 
+  it('knows the buy-low-sell-high strategies cannot trade $2.50', () => {
+    for (const strategy of ['rsi-mean-reversion', 'bollinger-reversion', 'grid-range', 'dca-safety']) {
+      expect(minEquityFor({ strategy, timeframe: '1d' })).toBeGreaterThan(2.5);
+    }
+  });
+
   it('queues only bots that can trade at the same $2.50', () => {
     const full = planFleet(Array.from({ length: 32 }, (_, i) => `C${i}/USD`), 2.5);
     const reserve = planReserve(full, bots);

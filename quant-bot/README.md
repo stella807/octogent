@@ -884,6 +884,22 @@ The meme coins were added with `fleet-add --group "meme coins"`. They are
 validators: they trade meme coins with validator money and vote with their
 markets, and they reach real money only through the promotion rules.
 
+**"Buy low, sell high", put to the vote (2026-09-30).** The fleet tested
+its dip-buying strategies on its 40 daily markets:
+
+| Strategy | Passes on | Consensus | $ per bot for $1 orders |
+|---|---|---|---|
+| rsi-mean-reversion | 0 of 40 | not worthy | ~$70 |
+| bollinger-reversion | 0 of 40 | not worthy | ~$80 |
+| grid-range | 0 of 40 | not worthy | ~$490 |
+| dca-safety | 4 of 40 | not worthy (luck gives this 14% of the time) | ~$159 |
+| trend-hold (for comparison) | 7 of 40 | **worthy** (luck: 0.3%) | ~$1 |
+
+On these markets, buying strength and selling weakness is what survives.
+Buying dips does not, and at $2.50 a bot its orders would not even clear
+the $1 minimum. `fleet-add` now refuses bots that could never place an
+order.
+
 **TradingView data.** TradingView has no public data API, and the
 unofficial scrapers break its terms, so the fleet does not pull from it. Its
 `COINBASE:` charts show Coinbase's own feed, which is what the bots already

@@ -236,7 +236,12 @@ export const DEFAULT_BOT_EQUITY = 25;
 export const MIN_EQUITY: Readonly<Record<string, number>> = {
   'donchian-breakout@1d': 19,
   'ema-zone-reversal@1d': 33,
-  'dca-safety@1d': 29,
+  // The buy-low-sell-high strategies, measured across the fleet's 40 daily
+  // markets: small dip buys and grid rungs are a sliver of the account each.
+  'dca-safety@1d': 159,
+  'rsi-mean-reversion@1d': 70,
+  'bollinger-reversion@1d': 80,
+  'grid-range@1d': 490,
 };
 const FULL_POSITION_MIN = 1.01;
 
@@ -244,7 +249,7 @@ export function minEquityFor(spec: Pick<BotSpec, 'strategy' | 'timeframe'>): num
   return MIN_EQUITY[`${spec.strategy}@${spec.timeframe}`] ?? FULL_POSITION_MIN;
 }
 
-function canTrade(spec: BotSpec): boolean {
+export function canTrade(spec: BotSpec): boolean {
   return minEquityFor(spec) <= spec.equity;
 }
 
