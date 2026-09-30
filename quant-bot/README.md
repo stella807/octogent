@@ -822,37 +822,58 @@ give way to buy-and-hold ETH and trend-hold SOL, and 60 bots stay queued.
 One risk is specific to small accounts: a position that falls under $1 can
 no longer be sold, since the sell would be under the minimum too.
 
-**Survival: validate, beat luck, or die.** Once an hour `fleet` runs the
-lifecycle. Coin-flip and buy-and-hold bots are yardsticks and are exempt.
+**Keep the good ones, not the lucky ones.** Once an hour `fleet` runs a
+lifecycle over three roles: traders (real paper money), validators
+(validator money, not counted in the fleet), and controls. Coin-flip and
+buy-and-hold are controls: yardsticks that never change role.
 
-- **Birth.** A queued bot is only born if its strategy passes the
-  walk-forward screen on its own market, speed, fee and account size (the
-  same screen as `screen`: 10 or more out-of-sample trades, 3 or more folds,
-  efficiency of at least 0.5, profitable out of sample). Money is spent only
-  after it passes.
-- **Re-validation.** Every living bot is re-tested once a day on the latest
-  data.
-- **Death.** A bot dies when:
-  - it fails a re-test;
-  - its kill switch trips;
-  - it is too small to place its orders; or
-  - after a trial (30 days daily, 1 day for 1-minute bots) it has lost
-    money and done worse than the coin flip at its own speed.
+- **Own-market test.** Once a day every trader and candidate is
+  walk-forward tested on its own market, with its own fee and account size.
+  It is also tested on the same market's bars shuffled into random order.
+  It must pass the first and fail the second: a strategy that also
+  "works" on scrambled prices was lucky.
+- **Consensus.** Once a day each strategy is tested on every fleet member's
+  market at its speed, each market voting once. It is worthy when it passes
+  on more markets than luck explains. The shuffled pass rate is luck's rate
+  (at least 5%), and the passes must be significant at 5% by a binomial
+  tail, with at least 3 markets voting.
+- **Demotion, not death.** A trader becomes a validator when it:
+  - fails its own test;
+  - is lucky (passes on shuffled prices);
+  - loses consensus;
+  - trips its kill switch;
+  - is too small to trade; or
+  - after its trial (30 days daily, 1 day for 1-minute bots) is not making
+    money.
 
-  Losing in a falling market is not death; doing worse than luck is.
-- **Recycling.** A dying bot sells what it holds, and its cash goes to a
-  treasury. The treasury funds births first, and banked profit funds them
-  after that.
+  It sells up, and its cash goes to the treasury.
+- **Validators.** They keep trading with validator money and vote with
+  their markets. A candidate from the queue that is not worthy yet joins
+  them instead of being discarded.
+- **Promotion.** A validator or candidate becomes a trader when it passes
+  its own test without luck and the fleet's consensus approves its
+  strategy. A demoted bot must also have made money with validator money
+  over a full trial since its demotion. Each stint of real trading gets a
+  fresh account, funded by the treasury first and banked profit after that.
 
 The first round on the $25 fleet (2026-09-30):
 
-- **5 died.** trend-hold BTC had 9 out-of-sample trades, one short of the
-  rule; trend-hold SOL was curve-fit; and all three 1-minute strategies
-  failed, since they never make money in-sample.
-- **4 were born** from the treasury: trend-hold on XRP, ZEC, UNI and XLM.
-- **8 were never born:** NEAR, SUI, LINK and DOGE were curve-fit; BTC and
-  ADA had too few trades; QNT had too few folds; HYPE had too little
-  history.
+- trend-hold@1d was **worthy**: it passed on 5 of 14 markets, which luck
+  would do 0.2% of the time.
+- trend-hold XRP was **demoted as lucky**: it passed on its shuffled prices
+  too.
+- The 1-minute strategies had no consensus: one market cannot vote a
+  strategy in.
+- trend-hold VVV was **promoted**, paid for by the treasury.
+- 18 bots are validators.
+
+**TradingView data.** TradingView has no public data API, and the
+unofficial scrapers break its terms, so the fleet does not pull from it. Its
+`COINBASE:` charts show Coinbase's own feed, which is what the bots already
+use. For backtests on anything TradingView shows, use "Export chart data" on
+the chart and pass the file with `--csv`. The loader reads the export by
+its header: TradingView's column names, any indicator columns (ignored), and
+a missing Volume column (read as zero).
 
 **Money each bot needs.** The binding limit is the $1 minimum order.
 Measured from each strategy's smallest entry over BTC history:

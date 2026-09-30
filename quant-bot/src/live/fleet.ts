@@ -29,6 +29,14 @@ export interface BotLife {
   readonly bornAt: string;
   readonly validatedAt?: string;
   readonly validation?: string;
+  readonly validPassed?: boolean;
+  readonly luckPassed?: boolean;
+  /** Set while a validator is serving out its demotion; its validator trial counts from here. */
+  readonly demotedAt?: string;
+  /** Which validator stint this is; each gets a fresh validator-money account. */
+  readonly shadowRound?: number;
+  /** Which stint of real trading this is; each gets a fresh account funded by the fleet. */
+  readonly generation?: number;
 }
 
 export interface DeadBot {
@@ -54,6 +62,14 @@ export interface FleetFile {
   readonly dead?: readonly DeadBot[];
   /** Queued bots whose strategy failed validation before they ever traded. */
   readonly rejected?: readonly { readonly name: string; readonly reason: string }[];
+  /**
+   * Bots without money: demoted traders and candidates not yet worthy. They
+   * keep trading with validator money (not counted in the fleet), vote on
+   * other bots' strategies with their markets, and can be promoted back.
+   */
+  readonly validators?: readonly BotSpec[];
+  /** The fleet's latest verdict per strategy@timeframe. */
+  readonly consensus?: Readonly<Record<string, Consensus & { readonly at: string }>>;
 }
 
 /**
@@ -84,31 +100,126 @@ function trialFor(timeframe: Timeframe): number {
 /** How often a living bot's strategy is re-validated against the latest data. */
 export const REVALIDATE_MS = DAY_MS;
 
+export interface Validation {
+  readonly passed: boolean;
+  /** Whether the same strategy also passed on its market's bars shuffled into random order. */
+  readonly luckPassed: boolean;
+  readonly reason: string;
+}
+
 export interface Contestant {
   readonly spec: BotSpec;
   readonly status: PaperStatus;
   readonly ageMs: number;
-  /** Latest walk-forward verdict; null if it has not been validated. */
-  readonly validation: { readonly passed: boolean; readonly reason: string } | null;
+  /** Latest walk-forward verdict on its own market; null if not checked this round. */
+  readonly validation: Validation | null;
+}
+
+/** P(X >= k) for X ~ Binomial(n, p): the chance luck alone produces k or more passes. */
+export function binomialTail(k: number, n: number, p: number): number {
+  if (k <= 0) return 1;
+  let tail = 0;
+  let coeff = 1;
+  for (let i = 0; i <= n; i += 1) {
+    if (i > 0) coeff = (coeff * (n - i + 1)) / i;
+    if (i >= k) tail += coeff * p ** i * (1 - p) ** (n - i);
+  }
+  return Math.min(1, tail);
+}
+
+export interface Vote {
+  /** The voter's market; each market votes once. */
+  readonly market: string;
+  /** The candidate's strategy passed walk-forward on this market. */
+  readonly passed: boolean;
+  /** It also passed on this market's shuffled bars: what luck looks like here. */
+  readonly luckPassed: boolean;
+}
+
+export interface Consensus {
+  readonly approved: boolean;
+  readonly passes: number;
+  readonly voters: number;
+  readonly luckRate: number;
+  /** Chance luck alone would give this many passes. */
+  readonly pValue: number;
+}
+
+/** Fewer markets than this cannot tell a good strategy from a lucky one. */
+const QUORUM = 3;
+/** Luck is never assumed rarer than this, even if no shuffled market happened to pass. */
+const LUCK_FLOOR = 0.05;
+const SIGNIFICANCE = 0.05;
+
+/**
+ * The fleet's verdict on a strategy. Every bot tests it on its own market,
+ * and on that market shuffled into random order. A strategy is worthy when it
+ * passes on more real markets than luck can explain — the shuffled pass rate
+ * is luck's rate — at 5% significance. One lucky coin cannot pass this; a
+ * strategy that works across markets can.
+ */
+export function consensusVerdict(votes: readonly Vote[]): Consensus {
+  const byMarket = new Map<string, Vote>();
+  for (const v of votes) if (!byMarket.has(v.market)) byMarket.set(v.market, v);
+  const counted = [...byMarket.values()];
+  const voters = counted.length;
+  const passes = counted.filter((v) => v.passed).length;
+  const luckRate = voters > 0 ? Math.max(LUCK_FLOOR, counted.filter((v) => v.luckPassed).length / voters) : 1;
+  const pValue = binomialTail(passes, voters, luckRate);
+  return { approved: voters >= QUORUM && passes >= 2 && pValue < SIGNIFICANCE, passes, voters, luckRate, pValue };
+}
+
+export function describeConsensus(c: Consensus): string {
+  return `${c.passes} of ${c.voters} markets (luck would do this ${(c.pValue * 100).toFixed(1)}% of the time)`;
 }
 
 /**
- * Why a bot dies now, or null if it lives. `controlPnlPct` is the coin-flip
- * control's return at the same timeframe: losing money in a falling market
- * is not a verdict on the strategy, doing worse than luck is.
+ * Why a trader is demoted to validator now, or null if it keeps trading.
+ * Controls never are: the coin flip and buy-and-hold are the yardsticks.
  */
-export function deathReason(bot: Contestant, controlPnlPct: number | null): string | null {
+export function demotionReason(bot: Contestant, controlPnlPct: number | null, consensus: Consensus | null): string | null {
   if (isControl(bot.spec.strategy)) return null;
   if (bot.validation && !bot.validation.passed) return `failed validation: ${bot.validation.reason}`;
+  if (bot.validation?.luckPassed) return 'passes on shuffled prices too: its pass was luck, not skill';
+  if (consensus && !consensus.approved) return `lost the fleet's consensus: ${describeConsensus(consensus)}`;
   if (bot.status.killed) return `kill switch tripped: ${bot.status.killReason ?? 'unknown'}`;
   if (bot.status.equity < minEquityFor(bot.spec)) {
     return `too small to trade: $${bot.status.equity.toFixed(2)} is under what its orders need`;
   }
-  if (bot.ageMs >= trialFor(bot.spec.timeframe) && bot.status.pnl < 0
-    && controlPnlPct !== null && bot.status.pnlPct < controlPnlPct) {
-    return `lost ${bot.status.pnlPct.toFixed(1)}% over its trial, worse than a coin flip (${controlPnlPct.toFixed(1)}%)`;
+  if (bot.ageMs >= trialFor(bot.spec.timeframe) && bot.status.pnl < 0) {
+    const flip = controlPnlPct === null ? '' : ` (coin flip: ${controlPnlPct.toFixed(1)}%)`;
+    return `not making money after its trial: ${bot.status.pnlPct.toFixed(1)}%${flip}`;
   }
   return null;
+}
+
+/**
+ * Whether a validator (or a queued candidate) is worthy of real money. It
+ * must validate on its own market without the pass being luck, and win the
+ * fleet's consensus. A demoted bot must also have made money with validator
+ * money over a full trial since it was demoted: it lost once, so its word
+ * alone is not enough.
+ */
+export function promotionVerdict(input: {
+  readonly validation: Validation | null;
+  readonly consensus: Consensus | null;
+  readonly demoted: boolean;
+  readonly shadow: { readonly pnl: number; readonly ageMs: number } | null;
+  readonly trialMs?: number;
+}): { promote: boolean; reason: string } {
+  const { validation, consensus } = input;
+  if (!validation) return { promote: false, reason: 'not validated yet' };
+  if (!validation.passed) return { promote: false, reason: `fails validation: ${validation.reason}` };
+  if (validation.luckPassed) return { promote: false, reason: 'passes on shuffled prices too: luck' };
+  if (!consensus?.approved) {
+    return { promote: false, reason: consensus ? `no consensus: ${describeConsensus(consensus)}` : 'no consensus yet' };
+  }
+  if (input.demoted) {
+    const trial = input.trialMs ?? (TRIAL_MS['1d'] as number);
+    if (!input.shadow || input.shadow.ageMs < trial) return { promote: false, reason: 'still in its validator trial' };
+    if (input.shadow.pnl <= 0) return { promote: false, reason: 'its validator record is not profitable' };
+  }
+  return { promote: true, reason: `${validation.reason}; consensus ${describeConsensus(consensus)}` };
 }
 
 /** Each bot's account when no budget is given: ten bots, $250 in all. */
@@ -330,7 +441,8 @@ export function parseFleet(json: string): FleetFile {
   if (typeof raw.exchange !== 'string' || !Array.isArray(raw.bots)) throw new Error('fleet file needs "exchange" and "bots"');
   const seen = new Set<string>();
   const reserve = Array.isArray(raw.reserve) ? (raw.reserve as BotSpec[]) : [];
-  for (const b of [...(raw.bots as BotSpec[]), ...reserve]) {
+  const validatorSpecs = Array.isArray(raw.validators) ? (raw.validators as BotSpec[]) : [];
+  for (const b of [...(raw.bots as BotSpec[]), ...reserve, ...validatorSpecs]) {
     if (typeof b.name !== 'string' || !SAFE_NAME.test(b.name)) throw new Error(`bad bot name "${String(b.name)}": use a-z, 0-9 and -`);
     if (seen.has(b.name)) throw new Error(`duplicate bot name "${b.name}"`);
     seen.add(b.name);
@@ -350,17 +462,36 @@ export function parseFleet(json: string): FleetFile {
     life: raw.life ?? {},
     dead: Array.isArray(raw.dead) ? raw.dead : [],
     rejected: Array.isArray(raw.rejected) ? raw.rejected : [],
+    validators: Array.isArray(raw.validators) ? (raw.validators as BotSpec[]) : [],
+    consensus: raw.consensus ?? {},
   };
 }
 
-export function botStatePath(fleetDir: string, name: string): string {
-  return join(fleetDir, name, 'runner-state.json');
+/** A bot's trading account; each new stint of real trading starts a fresh one. */
+export function botStatePath(fleetDir: string, name: string, generation = 1): string {
+  return generation > 1
+    ? join(fleetDir, name, `gen-${generation}`, 'runner-state.json')
+    : join(fleetDir, name, 'runner-state.json');
+}
+
+/** A validator's account of validator money, fresh for each stint as a validator. */
+export function shadowStatePath(fleetDir: string, name: string, round: number): string {
+  return join(fleetDir, name, `validator-${round}`, 'runner-state.json');
 }
 
 export interface FleetRow {
   readonly spec: BotSpec;
   /** Null until the bot has written its account. */
   readonly status: PaperStatus | null;
+}
+
+export interface ValidatorRow {
+  readonly spec: BotSpec;
+  /** Its validator-money account; null before its first poll. */
+  readonly shadow: PaperStatus | null;
+  readonly demoted: boolean;
+  /** Why it is not trading real money right now. */
+  readonly note: string;
 }
 
 export interface ExpansionSummary {
@@ -371,6 +502,8 @@ export interface ExpansionSummary {
   readonly treasury?: number;
   readonly dead?: readonly DeadBot[];
   readonly rejected?: number;
+  readonly validators?: readonly ValidatorRow[];
+  readonly consensus?: Readonly<Record<string, Consensus>>;
 }
 
 export function formatFleetStatus(rows: readonly FleetRow[], expansion?: ExpansionSummary): string {
@@ -431,11 +564,23 @@ export function formatFleetStatus(rows: readonly FleetRow[], expansion?: Expansi
         : '.'),
     );
   }
-  if (expansion && (expansion.dead?.length || expansion.treasury || expansion.rejected)) {
-    lines.push('', `SURVIVAL  treasury $${(expansion.treasury ?? 0).toFixed(2)} from retired bots, ` +
-      `${expansion.dead?.length ?? 0} died, ${expansion.rejected ?? 0} never born (failed validation)`);
+  if (expansion?.validators?.length) {
+    lines.push('', `VALIDATORS  (validator money, not counted above; they vote, and trade again once the fleet deems them worthy)`);
+    for (const v of expansion.validators) {
+      const record = v.shadow ? `${signed(v.shadow.pnl)}`.padStart(8) : 'starting'.padStart(8);
+      lines.push(`  ${`${v.spec.strategy} ${v.spec.symbols.join(',')} ${v.spec.timeframe}`.padEnd(34)} ${record}  ${v.demoted ? 'demoted: ' : ''}${v.note}`);
+    }
+  }
+  if (expansion?.consensus && Object.keys(expansion.consensus).length > 0) {
+    lines.push('', 'CONSENSUS  (each strategy tested on every bot\'s market, against the shuffled-price luck rate)');
+    for (const [key, c] of Object.entries(expansion.consensus)) {
+      lines.push(`  ${key.padEnd(24)} ${c.approved ? 'WORTHY' : 'not worthy'}: ${describeConsensus(c)}`);
+    }
+  }
+  if (expansion && (expansion.dead?.length || expansion.treasury)) {
+    lines.push('', `TREASURY  $${(expansion.treasury ?? 0).toFixed(2)} returned by demoted bots, waiting to fund promotions`);
     for (const d of (expansion.dead ?? []).slice(-10)) {
-      lines.push(`  ✝ ${d.name.padEnd(32)} ${d.reason}`);
+      lines.push(`  ↓ ${d.name.padEnd(32)} ${d.reason}`);
     }
   }
   lines.push(

@@ -29,6 +29,26 @@ describe('parseCsv', () => {
     expect(candles[0]?.time).toBeLessThan(candles[1]?.time ?? 0);
   });
 
+  it('reads a TradingView chart export by its header, indicator columns and all', () => {
+    const candles = parseCsv(`time,open,high,low,close,Volume,Volume MA,EMA
+1704067200,42000,42500,41800,42300,120.5,110.2,NaN
+1704153600,42300,43000,42100,42900,98.1,112.0,42600`);
+    expect(candles).toHaveLength(2);
+    expect(candles[1]).toEqual({ time: 1704153600000, open: 42300, high: 43000, low: 42100, close: 42900, volume: 98.1 });
+  });
+
+  it('reads a TradingView export with no Volume column as zero volume', () => {
+    const candles = parseCsv(`time,open,high,low,close
+2024-01-01T00:00:00Z,1,2,0.5,1.5`);
+    expect(candles[0]?.volume).toBe(0);
+  });
+
+  it('finds the columns by name when they are in a different order', () => {
+    const [c] = parseCsv(`close,high,low,open,time,volume
+1.5,2,0.5,1,1704067200,3`);
+    expect(c).toEqual({ time: 1704067200000, open: 1, high: 2, low: 0.5, close: 1.5, volume: 3 });
+  });
+
   it('rejects a row whose high is below its open, which would fake stop fills', () => {
     expect(() => parseCsv('1704067200,100,99,90,95,1')).toThrow(/inconsistent OHLC/);
   });

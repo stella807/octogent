@@ -33,8 +33,16 @@ import { LiveRunner } from './live/runner.ts';
 import { TelegramNotifier } from './live/notifier.ts';
 import {
   botStatePath,
-  deathReason,
+  consensusVerdict,
+  demotionReason,
+  describeConsensus,
   isControl,
+  promotionVerdict,
+  shadowStatePath,
+  TRIAL_MS,
+  type Consensus,
+  type Validation,
+  type Vote,
   REVALIDATE_MS,
   sameTrade,
   type BotLife,
@@ -640,11 +648,11 @@ export async function main(argv: readonly string[]): Promise<number> {
       const initial = parseFleet(await readFile(fleetPath, 'utf8'));
       const exchange = initial.exchange;
       const controller = new AbortController();
-      const live = new Map<string, { broker: PaperBroker; stop: AbortController; run: Promise<void> }>();
+      /** Running bots by name: traders on real (paper) money, validators on validator money. */
+      const live = new Map<string, { broker: PaperBroker; stop: AbortController; run: Promise<void>; role: 'trader' | 'validator' }>();
       const runs: Promise<void>[] = [];
-      const start = (spec: BotSpec): void => {
+      const start = (spec: BotSpec, role: 'trader' | 'validator', statePath: string): void => {
         const factory = getStrategy(spec.strategy);
-        const statePath = botStatePath(fleetDir, spec.name);
         const broker = new PaperBroker({
           startingCash: spec.equity,
           costs: { ...config.costs, feeBps: spec.feeBps },
@@ -653,6 +661,7 @@ export async function main(argv: readonly string[]): Promise<number> {
             exchange, symbol: sym, timeframe: tf, bars: count, cacheDir: 'data/cache', noCache: true,
           }),
         });
+        const tag = role === 'validator' ? `${spec.name} (validator)` : spec.name;
         // No notifier: one message per fill across dozens of bots would bury anything that mattered.
         const runner = new LiveRunner({
           broker,
@@ -662,23 +671,28 @@ export async function main(argv: readonly string[]): Promise<number> {
           timeframe: spec.timeframe,
           limits: { ...limits, maxDrawdownPct: spec.maxDrawdownPct },
           statePath,
-          log: (message) => process.stdout.write(`[${spec.name}] ${message}\n`),
+          log: (message) => process.stdout.write(`[${tag}] ${message}\n`),
         }, spec.equity);
         const stop = new AbortController();
         controller.signal.addEventListener('abort', () => stop.abort());
         const run = runner.run(stop.signal);
-        live.set(spec.name, { broker, stop, run });
+        live.set(spec.name, { broker, stop, run, role });
         runs.push(run);
       };
-      for (const spec of initial.bots) start(spec);
+      const tradingPath = (fleet: FleetFile, name: string): string =>
+        botStatePath(fleetDir, name, fleet.life?.[name]?.generation ?? 1);
+      const validatorPath = (fleet: FleetFile, name: string): string =>
+        shadowStatePath(fleetDir, name, fleet.life?.[name]?.shadowRound ?? 1);
+      for (const spec of initial.bots) start(spec, 'trader', tradingPath(initial, spec.name));
+      for (const spec of initial.validators ?? []) start(spec, 'validator', validatorPath(initial, spec.name));
 
-      /** Walk-forward on the bot's own market, fee and account size: the same test every strategy here has faced. */
-      const validate = async (spec: BotSpec): Promise<{ passed: boolean; reason: string } | null> => {
-        const symbol = spec.symbols[0] as string;
+      const candlesFor = (spec: BotSpec, symbol: string): Promise<Candle[]> => fetchCandles({
+        exchange, symbol, timeframe: spec.timeframe, bars: spec.timeframe === '1d' ? 3000 : 10_000, cacheDir: 'data/cache',
+      });
+      /** Walk-forward on one market, and on the same market shuffled: skill has to show on the first and not the second. */
+      const test = async (spec: BotSpec, symbol: string): Promise<Validation | null> => {
         try {
-          const candles = await fetchCandles({
-            exchange, symbol, timeframe: spec.timeframe, bars: spec.timeframe === '1d' ? 3000 : 10_000, cacheDir: 'data/cache',
-          });
+          const candles = await candlesFor(spec, symbol);
           const wfConfig: BacktestConfig = {
             ...config,
             startingEquity: spec.equity,
@@ -686,20 +700,25 @@ export async function main(argv: readonly string[]): Promise<number> {
             costs: { ...config.costs, feeBps: spec.feeBps },
             limits: { ...limits, maxDrawdownPct: spec.maxDrawdownPct },
           };
-          const row = screenSymbol(symbol, candles, getStrategy(spec.strategy), { ...DEFAULT_WF_OPTIONS, config: wfConfig });
-          return { passed: row.passed, reason: row.reason };
+          const factory = getStrategy(spec.strategy);
+          const options = { ...DEFAULT_WF_OPTIONS, config: wfConfig };
+          const real = screenSymbol(symbol, candles, factory, options);
+          const luck = screenSymbol(symbol, shuffleBars(candles, 1), factory, options);
+          return { passed: real.passed, luckPassed: luck.passed, reason: real.reason };
         } catch {
           // No verdict this round: a data outage is not evidence against a strategy.
           return null;
         }
       };
 
-      /** Stops a bot, sells what it holds, and hands its cash back. Returns the cash. */
+      /** Stops a trader, sells what it holds, and hands its cash back. Returns the cash. */
       const retire = async (spec: BotSpec): Promise<number> => {
         const bot = live.get(spec.name);
         if (!bot) return 0;
         bot.stop.abort();
         await bot.run;
+        live.delete(spec.name);
+        if (bot.role !== 'trader') return 0;
         for (const symbol of spec.symbols) {
           const { qty } = await bot.broker.balance(symbol);
           if (qty <= 0) continue;
@@ -711,119 +730,199 @@ export async function main(argv: readonly string[]): Promise<number> {
           }
         }
         const { cash } = await bot.broker.balance(spec.symbols[0] as string);
-        live.delete(spec.name);
         return bot.broker.withdraw(cash);
       };
 
-      // Survival of the fittest, judged fairly: validate, retire, recycle,
-      // replace. Runs in this process because the bots' cash lives in these
-      // brokers; an edit to their files from outside would be overwritten.
+      // Keep the good ones, not the lucky ones. Once an hour: validate every
+      // bot on its own market (and against its shuffled market), let every
+      // bot's market vote on every strategy, demote traders that fail or do
+      // not make money, and promote validators the fleet deems worthy.
       const lifecycle = async (): Promise<void> => {
         let fleet = parseFleet(await readFile(fleetPath, 'utf8'));
         const nowMs = Date.now();
         const now = new Date(nowMs).toISOString();
         const life: Record<string, BotLife> = { ...fleet.life };
+        const fresh = (at: string | undefined): boolean => at !== undefined && nowMs - Date.parse(at) < REVALIDATE_MS;
         const budget = fleet.budget ?? fleet.bots
           .filter((b) => !(fleet.added ?? []).some((a) => a.name === b.name))
           .reduce((sum, b) => sum + b.equity, 0);
 
-        // 1. Every contestant re-proves its strategy once a day on the latest data.
-        const verdicts = new Map<string, { passed: boolean; reason: string } | null>();
-        for (const spec of fleet.bots) {
-          const current = (life[spec.name] ??= { bornAt: now });
-          if (isControl(spec.strategy)) continue;
-          if (current.validatedAt && nowMs - Date.parse(current.validatedAt) < REVALIDATE_MS) continue;
-          const verdict = await validate(spec);
-          verdicts.set(spec.name, verdict);
-          if (verdict) life[spec.name] = { ...current, validatedAt: now, validation: verdict.reason };
-        }
+        // 1. Each contestant's own market, re-tested daily.
+        const validationOf = async (spec: BotSpec): Promise<Validation | null> => {
+          const current = life[spec.name];
+          if (current?.validatedAt && fresh(current.validatedAt) && current.validPassed !== undefined) {
+            return { passed: current.validPassed, luckPassed: current.luckPassed ?? false, reason: current.validation ?? '' };
+          }
+          const v = await test(spec, spec.symbols[0] as string);
+          if (v) {
+            life[spec.name] = {
+              ...(current ?? { bornAt: now }),
+              validatedAt: now, validation: v.reason, validPassed: v.passed, luckPassed: v.luckPassed,
+            };
+          }
+          return v;
+        };
 
-        // 2. Judge every bot against the coin flip at its own speed.
+        // 2. The fleet's consensus per strategy: every member's market votes, once a day.
+        const consensus: Record<string, Consensus & { at: string }> = { ...fleet.consensus };
+        const consensusOf = async (spec: BotSpec): Promise<Consensus | null> => {
+          const key = `${spec.strategy}@${spec.timeframe}`;
+          const cached = consensus[key];
+          if (cached && fresh(cached.at)) return cached;
+          const members = [...fleet.bots, ...(fleet.validators ?? [])].filter((b) => b.timeframe === spec.timeframe);
+          const markets = [...new Set(members.flatMap((b) => b.symbols))];
+          const votes: Vote[] = [];
+          for (const market of markets) {
+            const v = await test(spec, market);
+            if (v) votes.push({ market, passed: v.passed, luckPassed: v.luckPassed });
+          }
+          if (votes.length === 0) return null;
+          const verdict = { ...consensusVerdict(votes), at: now };
+          consensus[key] = verdict;
+          process.stdout.write(`[fleet] consensus on ${key}: ${verdict.approved ? 'worthy' : 'not worthy'}, ${describeConsensus(verdict)}\n`);
+          return verdict;
+        };
+
+        // 3. Demote traders that fail, were lucky, lost consensus, or are not making money.
         const prices = priceCache(exchange);
         const statuses = new Map<string, PaperStatus>();
         for (const spec of fleet.bots) {
-          const status = await loadPaperStatus(botStatePath(fleetDir, spec.name), exchange, prices);
+          const status = await loadPaperStatus(tradingPath(fleet, spec.name), exchange, prices);
           if (status) statuses.set(spec.name, status);
         }
         const coinFlip = (timeframe: string): number | null => {
           const control = fleet.bots.find((b) => b.strategy === 'coin-flip' && b.timeframe === timeframe);
           return control ? statuses.get(control.name)?.pnlPct ?? null : null;
         };
-        const deaths: DeadBot[] = [];
         let treasury = fleet.treasury ?? 0;
+        const demoted: DeadBot[] = [];
+        const toValidators: BotSpec[] = [];
         for (const spec of fleet.bots) {
           const status = statuses.get(spec.name);
-          if (!status) continue;
-          const reason = deathReason({
+          if (!status || isControl(spec.strategy)) continue;
+          (life[spec.name] ??= { bornAt: now });
+          const reason = demotionReason({
             spec,
             status,
             ageMs: nowMs - Date.parse(life[spec.name]?.bornAt ?? now),
-            validation: verdicts.get(spec.name) ?? null,
-          }, coinFlip(spec.timeframe));
+            validation: await validationOf(spec),
+          }, coinFlip(spec.timeframe), await consensusOf(spec));
           if (!reason) continue;
           const returned = await retire(spec);
           treasury += returned;
-          deaths.push({ name: spec.name, at: now, reason, returned });
-          process.stdout.write(`[fleet] ${spec.name} died: ${reason}. Returned $${returned.toFixed(2)} to the treasury\n`);
+          const round = (life[spec.name]?.shadowRound ?? 0) + 1;
+          life[spec.name] = { ...(life[spec.name] as BotLife), demotedAt: now, shadowRound: round };
+          demoted.push({ name: spec.name, at: now, reason, returned });
+          toValidators.push(spec);
+          process.stdout.write(`[fleet] ${spec.name} demoted to validator: ${reason}. Returned $${returned.toFixed(2)} to the treasury\n`);
         }
-        const deadNames = new Set(deaths.map((d) => d.name));
+        const demotedNames = new Set(demoted.map((d) => d.name));
         fleet = {
           ...fleet,
           budget,
           treasury,
           life,
-          bots: fleet.bots.filter((b) => !deadNames.has(b.name)),
-          dead: [...(fleet.dead ?? []), ...deaths],
+          consensus,
+          bots: fleet.bots.filter((b) => !demotedNames.has(b.name)),
+          validators: [...(fleet.validators ?? []), ...toValidators],
+          dead: [...(fleet.dead ?? []), ...demoted],
         };
+        for (const spec of toValidators) start(spec, 'validator', validatorPath(fleet, spec.name));
         await writeFleet(fleetPath, fleet);
 
-        // 3. Births: the next queued contestant that validates, paid for by
-        //    dead bots' cash first, then by banked profit. Controls in the
-        //    queue are skipped: one yardstick per speed is enough.
-        for (;;) {
-          const next = (fleet.reserve ?? []).find((b) => !isControl(b.strategy) && !fleet.bots.some((r) => sameTrade(r, b)));
-          if (!next) return;
-          const funds = await fleetFunds(fleet, fleetDir, prices);
+        // 4. Promotions, while there is money for them: validators first (a
+        //    proven validator record is the strongest evidence here), then
+        //    queued candidates. Candidates that are not worthy become
+        //    validators instead of being thrown away.
+        const fund = async (cost: number): Promise<{ paidBy: string; fundedBy: Record<string, number> | null } | null> => {
+          if ((fleet.treasury ?? 0) >= cost) {
+            fleet = { ...fleet, treasury: Number(((fleet.treasury ?? 0) - cost).toFixed(8)) };
+            return { paidBy: 'the treasury', fundedBy: null };
+          }
+          const funds = await fleetFunds(fleet, fleetDir, prices, (name) => tradingPath(fleet, name));
           const value = funds.reduce((sum, f) => sum + f.equity, 0) + (fleet.treasury ?? 0);
-          const fromTreasury = (fleet.treasury ?? 0) >= next.equity;
-          const plan = fromTreasury ? null : planExpansion(funds, {
-            principal: budget, added: (fleet.added ?? []).length, cost: next.equity, value,
-          });
-          if (!fromTreasury && !plan) return;
-          const verdict = await validate(next);
-          const rest = (fleet.reserve ?? []).filter((b) => b.name !== next.name);
-          if (!verdict) return;
-          if (!verdict.passed) {
-            fleet = { ...fleet, reserve: rest, rejected: [...(fleet.rejected ?? []), { name: next.name, reason: verdict.reason }] };
-            await writeFleet(fleetPath, fleet);
-            process.stdout.write(`[fleet] ${next.name} was never born: ${verdict.reason}\n`);
-            continue;
+          const plan = planExpansion(funds, { principal: budget, added: (fleet.added ?? []).length, cost, value });
+          if (!plan) return null;
+          const fundedBy: Record<string, number> = {};
+          for (const [name, amount] of Object.entries(plan)) {
+            const donor = live.get(name);
+            if (donor?.role === 'trader') fundedBy[name] = await donor.broker.withdraw(amount);
           }
-          let added = fleet.added ?? [];
-          let paidBy: string;
-          if (fromTreasury) {
-            fleet = { ...fleet, treasury: Number(((fleet.treasury ?? 0) - next.equity).toFixed(8)) };
-            paidBy = 'the treasury';
-          } else {
-            const fundedBy: Record<string, number> = {};
-            for (const [name, amount] of Object.entries(plan ?? {})) {
-              const donor = live.get(name);
-              if (donor) fundedBy[name] = await donor.broker.withdraw(amount);
-            }
-            added = [...added, { name: next.name, at: now, fundedBy }];
-            paidBy = Object.entries(fundedBy).map(([n, a]) => `${n} $${a.toFixed(2)}`).join(', ');
-          }
+          return { paidBy: Object.entries(fundedBy).map(([n, a]) => `${n} $${a.toFixed(2)}`).join(', '), fundedBy };
+        };
+        const canAfford = async (cost: number): Promise<boolean> => {
+          if ((fleet.treasury ?? 0) >= cost) return true;
+          const funds = await fleetFunds(fleet, fleetDir, prices, (name) => tradingPath(fleet, name));
+          const value = funds.reduce((sum, f) => sum + f.equity, 0) + (fleet.treasury ?? 0);
+          return planExpansion(funds, { principal: budget, added: (fleet.added ?? []).length, cost, value }) !== null;
+        };
+        const promote = async (spec: BotSpec, reason: string, fromValidators: boolean): Promise<boolean> => {
+          const paid = await fund(spec.equity);
+          if (!paid) return false;
+          if (fromValidators) await retire(spec);
+          const generation = (fleet.life?.[spec.name]?.generation ?? (fromValidators && fleet.life?.[spec.name]?.demotedAt ? 1 : 0)) + 1;
+          const { demotedAt: _dropped, ...rest } = fleet.life?.[spec.name] ?? { bornAt: now };
           fleet = {
             ...fleet,
-            bots: [...fleet.bots, next],
-            reserve: rest,
-            added,
-            life: { ...fleet.life, [next.name]: { bornAt: now, validatedAt: now, validation: verdict.reason } },
+            bots: [...fleet.bots, spec],
+            validators: (fleet.validators ?? []).filter((v) => v.name !== spec.name),
+            reserve: (fleet.reserve ?? []).filter((b) => b.name !== spec.name),
+            added: paid.fundedBy ? [...(fleet.added ?? []), { name: spec.name, at: now, fundedBy: paid.fundedBy }] : fleet.added ?? [],
+            life: { ...fleet.life, [spec.name]: { ...rest, bornAt: now, generation } },
           };
           await writeFleet(fleetPath, fleet);
-          process.stdout.write(`[fleet] ${next.name} born (${verdict.reason}), paid for by ${paidBy}\n`);
-          start(next);
+          process.stdout.write(`[fleet] ${spec.name} promoted to trader (${reason}), paid for by ${paid.paidBy}\n`);
+          start(spec, 'trader', tradingPath(fleet, spec.name));
+          return true;
+        };
+
+        const validatorsByRecord: { spec: BotSpec; pnl: number }[] = [];
+        for (const spec of fleet.validators ?? []) {
+          const shadow = await loadPaperStatus(validatorPath(fleet, spec.name), exchange, prices);
+          validatorsByRecord.push({ spec, pnl: shadow?.pnl ?? 0 });
         }
+        validatorsByRecord.sort((a, b) => b.pnl - a.pnl);
+        for (const { spec } of validatorsByRecord) {
+          if (fleet.bots.some((b) => sameTrade(b, spec))) continue;
+          if (!(await canAfford(spec.equity))) break;
+          const lifeNow = life[spec.name];
+          const shadow = await loadPaperStatus(validatorPath(fleet, spec.name), exchange, prices);
+          const verdict = promotionVerdict({
+            validation: await validationOf(spec),
+            consensus: await consensusOf(spec),
+            demoted: lifeNow?.demotedAt !== undefined,
+            shadow: shadow && lifeNow?.demotedAt ? { pnl: shadow.pnl, ageMs: nowMs - Date.parse(lifeNow.demotedAt) } : null,
+            trialMs: TRIAL_MS[spec.timeframe] ?? (TRIAL_MS['1d'] as number),
+          });
+          if (verdict.promote) await promote(spec, verdict.reason, true);
+        }
+        for (;;) {
+          const next = (fleet.reserve ?? []).find((b) => !isControl(b.strategy)
+            && ![...fleet.bots, ...(fleet.validators ?? [])].some((r) => sameTrade(r, b)));
+          if (!next || !(await canAfford(next.equity))) break;
+          const verdict = promotionVerdict({
+            validation: await validationOf(next),
+            consensus: await consensusOf(next),
+            demoted: false,
+            shadow: null,
+          });
+          if (verdict.promote) {
+            if (!(await promote(next, verdict.reason, false))) break;
+            continue;
+          }
+          // Not worthy yet: it joins the validators, votes with its market, and can be promoted later.
+          life[next.name] = { ...(life[next.name] ?? { bornAt: now }), shadowRound: 1 };
+          fleet = {
+            ...fleet,
+            life: { ...fleet.life, ...life },
+            reserve: (fleet.reserve ?? []).filter((b) => b.name !== next.name),
+            validators: [...(fleet.validators ?? []), next],
+          };
+          await writeFleet(fleetPath, fleet);
+          process.stdout.write(`[fleet] ${next.name} joins the validators: ${verdict.reason}\n`);
+          start(next, 'validator', validatorPath(fleet, next.name));
+        }
+        await writeFleet(fleetPath, { ...fleet, life: { ...life, ...fleet.life }, consensus });
       };
       const tick = (): void => {
         lifecycle().catch((error: unknown) => {
@@ -839,8 +938,9 @@ export async function main(argv: readonly string[]): Promise<number> {
         controller.abort();
       });
       process.stdout.write(
-        `fleet: ${initial.bots.length} paper bots on ${exchange} (no real money), ` +
-        `${initial.reserve?.length ?? 0} queued. Bots must validate and beat luck to live.\n`,
+        `fleet: ${initial.bots.length} traders and ${initial.validators?.length ?? 0} validators on ${exchange} ` +
+        `(paper, no real money), ${initial.reserve?.length ?? 0} queued. Traders must stay validated, keep the ` +
+        `fleet's consensus and make money; validators trade again once the fleet deems them worthy.\n`,
       );
       // One process, one shared rate-limited exchange connection: dozens of
       // separate processes would each open their own and trip the exchange's limits.
@@ -851,12 +951,25 @@ export async function main(argv: readonly string[]): Promise<number> {
 
     case 'fleet-status': {
       const fleetPath = values.fleet as string;
+      const fleetDir = dirname(fleetPath);
       const fleet = parseFleet(await readFile(fleetPath, 'utf8'));
       const prices = priceCache(fleet.exchange);
       const rows = await mapPool(fleet.bots, 4, async (spec) => ({
         spec,
-        status: await loadPaperStatus(botStatePath(dirname(fleetPath), spec.name), fleet.exchange, prices),
+        status: await loadPaperStatus(botStatePath(fleetDir, spec.name, fleet.life?.[spec.name]?.generation ?? 1), fleet.exchange, prices),
       }));
+      const validators = await mapPool(fleet.validators ?? [], 4, async (spec) => {
+        const life = fleet.life?.[spec.name];
+        return {
+          spec,
+          shadow: await loadPaperStatus(shadowStatePath(fleetDir, spec.name, life?.shadowRound ?? 1), fleet.exchange, prices),
+          demoted: life?.demotedAt !== undefined,
+          // A demoted bot shows why it lost its money; a candidate shows its latest test.
+          note: (life?.demotedAt !== undefined
+            ? [...(fleet.dead ?? [])].reverse().find((d) => d.name === spec.name)?.reason
+            : undefined) ?? life?.validation ?? 'waiting for its first validation',
+        };
+      });
       const added = new Set((fleet.added ?? []).map((a) => a.name));
       const principal = fleet.budget
         ?? rows.filter((r) => !added.has(r.spec.name)).reduce((sum, r) => sum + (r.status?.startingCash ?? r.spec.equity), 0);
@@ -874,6 +987,8 @@ export async function main(argv: readonly string[]): Promise<number> {
         treasury,
         dead: fleet.dead ?? [],
         rejected: fleet.rejected?.length ?? 0,
+        validators,
+        consensus: fleet.consensus ?? {},
       };
       if (values.json) emit({ rows, expansion });
       else process.stdout.write(`${formatFleetStatus(rows, expansion)}\n`);
@@ -1155,11 +1270,11 @@ async function fleetFunds(
   fleet: FleetFile,
   fleetDir: string,
   priceOf: (symbol: string) => Promise<number | null>,
+  pathOf: (name: string) => string = (name) => botStatePath(fleetDir, name),
 ): Promise<BotFunds[]> {
   const out: BotFunds[] = [];
   for (const spec of fleet.bots) {
-    const statePath = botStatePath(fleetDir, spec.name);
-    const status = await loadPaperStatus(statePath, fleet.exchange, priceOf);
+    const status = await loadPaperStatus(pathOf(spec.name), fleet.exchange, priceOf);
     if (!status) continue;
     out.push({
       name: spec.name,
