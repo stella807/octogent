@@ -200,6 +200,7 @@ node --experimental-strip-types src/cli.ts compare \
 | `paper` | Live market data, simulated fills, no real money. One symbol or many on one account |
 | `status` | The paper account: equity, profit/loss, every open position, closed trades by symbol. `--live` reads the real exchange account instead |
 | `swarm` | A crowd of rule-based traders forecasts P(up); `--evaluate` scores every past forecast |
+| `fleet-init` / `fleet` / `fleet-status` | Plan and run 76 paper bots at once (12 daily strategy bots, trend-hold on the 32 most-traded coins, 32 one-minute bots), each on its own $25 account with coin-flip controls, and report them grouped |
 | `binary` | Fixed-payout up/down bets on past prices: the swarm, a strategy, always-up and a coin flip against the breakeven hit rate |
 | `dashboard` | Writes `dashboard/market-eye.html`: every coin's forecast, the swarm's track record on it, its screen verdict and any paper position, in one page that opens from disk |
 | `live` | Real orders. Two independent gates stand in front of it. |
@@ -743,6 +744,31 @@ and none of that protection.
 
 The grid wins more than three trades in four and still loses money, because
 it is most heavily loaded exactly when price is falling hardest.
+
+## The paper fleet: 76 bots, each with a luck control
+
+```bash
+pnpm cli fleet-init --exchange coinbase   # ranks every USD market by dollar volume, writes .quant-bot/fleet/fleet.json
+pnpm cli fleet                            # runs every bot in one process, one shared rate-limited connection
+pnpm cli fleet-status                     # grouped profit table
+```
+
+- **Daily strategies (12):** trend-hold, donchian-breakout,
+  ema-zone-reversal, dca-safety, buy-and-hold and coin-flip, each on BTC and
+  ETH.
+- **trend-hold x32:** the 32 most-traded Coinbase USD coins with at least
+  200 days of history.
+- **Fast (32):** eight 1-minute styles, coin-flip included, on BTC, ETH,
+  SOL and XRP.
+
+Every bot has its own $25 paper account and folder, a 0.6% fee, and the kill
+switch it was tested with (60% for trend-hold, none for the two yardsticks,
+15% otherwise). `coin-flip` is long or flat at random each bar, drawn from a
+hash of the bar's timestamp. With 76 bots some will be up by chance, and a bot
+has shown nothing until it beats its group's coin flip for weeks.
+
+One finding from the first minute: `dca-safety` cannot trade $25 at all.
+Its base order is $0.89, under Coinbase's $1 minimum.
 
 ## trend-hold — the first rule that keeps up with buy-and-hold (2026-09-30)
 

@@ -14,7 +14,7 @@ import { evaluateSwarm } from './swarm/score.ts';
 import { coinFlip, formatBinary, runBinary, type BinaryOptions, type Call } from './backtest/binary.ts';
 import { formatScorecard, formatSwarmForecast } from './swarm/format.ts';
 import { assembleDashboard, renderDashboardPage, snapshotCoin, type CoinSnapshot } from './dashboard/build.ts';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { barsForRange, clipToRange, parseRange, type DateRange } from './data/range.ts';
 import { generateCandles } from './data/synthetic.ts';
@@ -31,6 +31,7 @@ import { formatScreen, readScreenFile, screenPath, writeScreenFile } from './scr
 import { connectReadOnly, ExchangeBroker, LIVE_CONFIRM_ENV, LIVE_CONFIRM_VALUE, readAccount, type AccountSnapshot } from './live/exchange-broker.ts';
 import { LiveRunner } from './live/runner.ts';
 import { TelegramNotifier } from './live/notifier.ts';
+import { botStatePath, formatFleetStatus, parseFleet, planFleet, rankByDollarVolume, type FleetFile } from './live/fleet.ts';
 import { alignCandles, alignmentCoverage } from './portfolio/align.ts';
 import { alignSentiment, fetchSentiment } from './data/sentiment.ts';
 import type { StrategyContext } from './strategy/types.ts';
@@ -50,6 +51,9 @@ quant-bot — crypto strategy research and paper trading
   walkforward  Pick parameters out-of-sample and report what survived
   montecarlo   Resample trade order to show the real spread of outcomes
   paper        Trade live market data with simulated fills (no real money)
+  fleet-init   Plan a paper fleet: 12 daily strategy bots, trend-hold on the 32 most-traded coins, 32 fast bots
+  fleet        Run every bot in the fleet file at once, each on its own paper account
+  fleet-status Every fleet bot's profit, grouped, next to its coin-flip control
   status       Paper account profit/loss and every open position; --live reads your real exchange account
   screen       Walk-forward test a strategy on every --quote market of an exchange; keep what passes
   swarm        Simulate a crowd of rule-based traders to forecast P(up); --evaluate scores it honestly
@@ -152,6 +156,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       live: { type: 'boolean', default: false },
       state: { type: 'string' },
       json: { type: 'boolean', default: false },
+      fleet: { type: 'string', default: '.quant-bot/fleet/fleet.json' },
     },
   });
 
@@ -574,6 +579,85 @@ export async function main(argv: readonly string[]): Promise<number> {
       return 0;
     }
 
+    case 'fleet-init': {
+      const path = values.fleet as string;
+      if (await exists(path)) {
+        throw new Error(`${path} already exists. Delete it to re-plan; each bot's account lives in its own folder and is kept.`);
+      }
+      const exchange = values.exchange as string;
+      const markets = await listMarkets(exchange, values.quote as string);
+      let done = 0;
+      const histories = await mapPool(markets, Math.trunc(num(values.concurrency, 'concurrency')), async (symbol) => {
+        let candles: Candle[] = [];
+        try {
+          candles = await fetchCandles({ exchange, symbol, timeframe: '1d', bars: 260, cacheDir: 'data/cache' });
+        } catch {
+          // A market that will not load is simply not a candidate.
+        }
+        done += 1;
+        if (done % 50 === 0) process.stderr.write(`  ranked ${done}/${markets.length} markets\n`);
+        return [symbol, candles] as const;
+      });
+      const top = rankByDollarVolume(Object.fromEntries(histories), { minBars: 201, top: 32, window: 30 });
+      const fleet: FleetFile = { exchange, createdAt: new Date().toISOString(), bots: planFleet(top) };
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, JSON.stringify(fleet, null, 2), 'utf8');
+      process.stdout.write(`Wrote ${path}: ${fleet.bots.length} bots. Most-traded coins: ${top.join(', ')}\n`);
+      return 0;
+    }
+
+    case 'fleet': {
+      const fleetPath = values.fleet as string;
+      const fleet = parseFleet(await readFile(fleetPath, 'utf8'));
+      const fleetDir = dirname(fleetPath);
+      const runners = fleet.bots.map((spec) => {
+        const factory = getStrategy(spec.strategy);
+        const statePath = botStatePath(fleetDir, spec.name);
+        const broker = new PaperBroker({
+          startingCash: spec.equity,
+          costs: { ...config.costs, feeBps: spec.feeBps },
+          accountPath: paperAccountPath(statePath),
+          feed: (sym, tf, count) => fetchCandles({
+            exchange: fleet.exchange, symbol: sym, timeframe: tf, bars: count, cacheDir: 'data/cache', noCache: true,
+          }),
+        });
+        // No notifier: one message per fill across 76 bots would bury anything that mattered.
+        return new LiveRunner({
+          broker,
+          factory,
+          params: { ...factory.defaults, ...spec.params },
+          symbols: spec.symbols,
+          timeframe: spec.timeframe,
+          limits: { ...limits, maxDrawdownPct: spec.maxDrawdownPct },
+          statePath,
+          log: (message) => process.stdout.write(`[${spec.name}] ${message}\n`),
+        }, spec.equity);
+      });
+      const controller = new AbortController();
+      process.on('SIGINT', () => {
+        process.stdout.write('\nstopping every bot after its current poll; open positions are left as-is\n');
+        controller.abort();
+      });
+      process.stdout.write(`fleet: ${runners.length} paper bots on ${fleet.exchange} (no real money)\n`);
+      // One process, one shared rate-limited exchange connection: 76 separate
+      // processes would each open their own and trip the exchange's limits.
+      await Promise.all(runners.map((r) => r.run(controller.signal)));
+      return 0;
+    }
+
+    case 'fleet-status': {
+      const fleetPath = values.fleet as string;
+      const fleet = parseFleet(await readFile(fleetPath, 'utf8'));
+      const prices = priceCache(fleet.exchange);
+      const rows = await mapPool(fleet.bots, 4, async (spec) => ({
+        spec,
+        status: await loadPaperStatus(botStatePath(dirname(fleetPath), spec.name), fleet.exchange, prices),
+      }));
+      if (values.json) emit(rows);
+      else process.stdout.write(`${formatFleetStatus(rows)}\n`);
+      return 0;
+    }
+
     case 'paper':
     case 'live': {
       const factory = getStrategy(values.strategy as string);
@@ -784,24 +868,46 @@ async function loadContext(
 
 
 /** The paper account marked to current prices, or null when no account exists yet. */
-async function loadPaperStatus(statePath: string, exchange: string): Promise<PaperStatus | null> {
+async function loadPaperStatus(
+  statePath: string,
+  exchange: string,
+  priceOf: (symbol: string) => Promise<number | null> = priceCache(exchange),
+): Promise<PaperStatus | null> {
   const account = await readPaperAccount(paperAccountPath(statePath));
   if (!account) return null;
   const state = await new StateStore(statePath).load();
   const prices: Record<string, number | null> = {};
   for (const [symbol, qty] of Object.entries(account.holdings)) {
-    if (qty <= 0) continue;
-    try {
-      const recent = await fetchCandles({
-        exchange, symbol, timeframe: '1m', bars: PRICE_LOOKBACK_MINUTES, cacheDir: 'data/cache', noCache: true,
-      });
-      prices[symbol] = recent[recent.length - 1]?.close ?? null;
-    } catch {
-      // Unpriced positions are reported as such rather than guessed at.
-      prices[symbol] = null;
-    }
+    if (qty > 0) prices[symbol] = await priceOf(symbol);
   }
   return paperStatus(account, state, prices);
+}
+
+/** Latest price per symbol, fetched once however many accounts hold it. */
+function priceCache(exchange: string): (symbol: string) => Promise<number | null> {
+  const cache = new Map<string, Promise<number | null>>();
+  return (symbol) => {
+    let price = cache.get(symbol);
+    if (!price) {
+      price = fetchCandles({
+        exchange, symbol, timeframe: '1m', bars: PRICE_LOOKBACK_MINUTES, cacheDir: 'data/cache', noCache: true,
+      })
+        .then((recent) => recent[recent.length - 1]?.close ?? null)
+        // Unpriced positions are reported as such rather than guessed at.
+        .catch(() => null);
+      cache.set(symbol, price);
+    }
+    return price;
+  };
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const DEFAULT_PORTFOLIO_UNIVERSE = 'BTC/USD,ETH/USD,SOL/USD,LTC/USD,LINK/USD,AVAX/USD';

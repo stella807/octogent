@@ -13,6 +13,7 @@ import { emaZoneReversal } from './ema-zone-reversal.ts';
 import { gridRange } from './grid-range.ts';
 import { dcaSafety } from './dca-safety.ts';
 import { trendHold } from './trend-hold.ts';
+import { coinFlipStrategy } from './coin-flip.ts';
 import type { StrategyFactory } from './types.ts';
 
 export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
@@ -31,6 +32,7 @@ export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
   [gridRange.name]: gridRange,
   [dcaSafety.name]: dcaSafety,
   [trendHold.name]: trendHold,
+  [coinFlipStrategy.name]: coinFlipStrategy,
 };
 
 export function getStrategy(name: string): StrategyFactory {
