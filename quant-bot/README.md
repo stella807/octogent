@@ -200,6 +200,7 @@ node --experimental-strip-types src/cli.ts compare \
 | `paper` | Live market data, simulated fills, no real money. One symbol or many on one account |
 | `status` | The paper account: equity, profit/loss, every open position, closed trades by symbol. `--live` reads the real exchange account instead |
 | `swarm` | A crowd of rule-based traders forecasts P(up); `--evaluate` scores every past forecast |
+| `research` / `research-status` | Background search for better strategies, with a development screen, a once-only holdout on unseen coins, and a bar that tightens with every test |
 | `fleet-init` / `fleet` / `fleet-status` | Run a paper fleet of 10 bots sharing `--budget` (default $250; 76 bots with `--size full`), each on its own account with coin-flip controls; queued bots are added only as banked profits pay for them |
 | `binary` | Fixed-payout up/down bets on past prices: the swarm, a strategy, always-up and a coin flip against the breakeven hit rate |
 | `dashboard` | Writes `dashboard/market-eye.html`: every coin's forecast, the swarm's track record on it, its screen verdict and any paper position, in one page that opens from disk |
@@ -1071,6 +1072,36 @@ not show the strategies fail on large liquid coins. It does show the earlier
 the selection of strategies on them was partly fitting. Expect live results on
 the coins the fleet actually trades to be closer to these than to the 38-coin
 numbers.
+
+**The background research loop.** `research` runs forever next to the fleet,
+drawing candidate strategies (a pool strategy with its parameters scaled
+0.5x to 2x; the pool is the full-position daily strategies, since stop-sized
+ones cannot trade small accounts) and trying to find better ones without
+fooling itself:
+
+1. **Development:** each candidate is walk-forward tested at its own fixed
+   parameters on the fleet's coins, and on those coins' shuffled prices. It
+   needs to beat its shuffled prices at p < 5%, have a positive median return
+   and be profitable on most coins.
+2. **Holdout, once:** only a candidate that passes goes to the coins the
+   fleet has never touched (every other listed market). The bar there is
+   0.05 divided by the number of holdout tests *ever* run, so the longer the
+   loop runs, the harder it is to pass by luck.
+3. **Confirmed candidates become validators** on BTC and ETH, on pretend
+   money. They reach real money only through the fleet's own promotion rules.
+
+By chance alone about 1 in 20 candidates passes development, which is why the
+holdout is the only result that counts. Expect it to confirm nothing for a
+long time, and most of the time that is the right answer.
+
+```bash
+pnpm cli research --per-round 20 --interval-min 15   # runs until stopped
+pnpm cli research-status                              # what it has tried and found
+```
+
+State and `report.md` live in `.quant-bot/research/`; `confirmed.json` is the
+hand-off the fleet reads each hour. Set the Telegram variables to be messaged
+the moment something is confirmed.
 
 **TradingView data.** TradingView has no public data API, and the
 unofficial scrapers break its terms, so the fleet does not pull from it. Its

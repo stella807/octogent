@@ -15,7 +15,7 @@ import { coinFlip, formatBinary, runBinary, type BinaryOptions, type Call } from
 import { formatScorecard, formatSwarmForecast } from './swarm/format.ts';
 import { assembleDashboard, renderDashboardPage, snapshotCoin, type CoinSnapshot } from './dashboard/build.ts';
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { barsForRange, clipToRange, parseRange, type DateRange } from './data/range.ts';
 import { generateCandles } from './data/synthetic.ts';
 import { BENCHMARK_LIMITS, CONSERVATIVE_LIMITS, DEFAULT_LIMITS, type RiskLimits } from './risk/risk-manager.ts';
@@ -59,6 +59,7 @@ import {
   planExpansion,
   planFleet,
   planReserve,
+  strategyFor,
   rankByDollarVolume,
   type BotFunds,
   type BotSpec,
@@ -67,6 +68,10 @@ import {
 import { alignCandles, alignmentCoverage } from './portfolio/align.ts';
 import { alignSentiment, fetchSentiment } from './data/sentiment.ts';
 import { alignNetflow, arkhamTokenId, loadWhaleFlows } from './data/arkham.ts';
+import {
+  candidateId, confirmedBotSpecs, emptyState, evaluateSet, formatResearchStatus, loadConfirmed, loadState,
+  passesDev, passesHoldout, sampleCandidate, saveState, writeJsonAtomic, type TrialRecord,
+} from './research/research.ts';
 import type { StrategyContext } from './strategy/types.ts';
 import { runPortfolioBacktest } from './portfolio/engine.ts';
 import { equalWeight, getPortfolioStrategy, PORTFOLIO_STRATEGIES } from './portfolio/index.ts';
@@ -88,6 +93,8 @@ quant-bot — crypto strategy research and paper trading
   fleet        Run every bot in the fleet file at once; adds queued bots as realized profits pay for them
   fleet-status Every fleet bot's profit, grouped, next to its coin-flip control
   whales       Arkham whale flows (needs ARKHAM_API_KEY): --symbol shows recent exchange netflow; --symbols votes trend-hold-whales vs trend-hold
+  research     Background search for better strategies: candidates are screened on the fleet's coins and confirmed once on coins never used; winners join as validators
+  research-status  What the research loop has tried, found and confirmed
   fleet-add    Add candidates (--strategy on --symbols) as validators; they trade real money only once the fleet deems them worthy
   status       Paper account profit/loss and every open position; --live reads your real exchange account
   screen       Walk-forward test a strategy on every --quote market of an exchange; keep what passes
@@ -196,6 +203,9 @@ export async function main(argv: readonly string[]): Promise<number> {
       budget: { type: 'string', default: '250' },
       group: { type: 'string', default: 'added' },
       'arkham-token': { type: 'string' },
+      'per-round': { type: 'string', default: '10' },
+      'interval-min': { type: 'string', default: '30' },
+      iterations: { type: 'string', default: '0' },
       'min-usd': { type: 'string', default: '1000000' },
     },
   });
@@ -715,7 +725,7 @@ export async function main(argv: readonly string[]): Promise<number> {
             costs: { ...config.costs, feeBps: spec.feeBps },
             limits: { ...limits, maxDrawdownPct: spec.maxDrawdownPct },
           };
-          const factory = getStrategy(spec.strategy);
+          const factory = strategyFor(spec);
           const options = { ...DEFAULT_WF_OPTIONS, config: wfConfig };
           const real = screenSymbol(symbol, candles, factory, options);
           const luck = screenSymbol(symbol, shuffleBars(candles, 1), factory, options);
@@ -758,6 +768,15 @@ export async function main(argv: readonly string[]): Promise<number> {
         const now = new Date(nowMs).toISOString();
         const life: Record<string, BotLife> = { ...fleet.life };
         const fresh = (at: string | undefined): boolean => at !== undefined && nowMs - Date.parse(at) < REVALIDATE_MS;
+        // Candidates the background research loop confirmed on unseen coins join as validators.
+        const confirmed = await loadConfirmed(join(dirname(dirname(fleetPath)), 'research', 'confirmed.json'));
+        if (confirmed.length > 0) {
+          const grown = addValidators(fleet, confirmedBotSpecs(confirmed, fleet.bots[0]?.equity ?? DEFAULT_BOT_EQUITY));
+          if ((grown.validators?.length ?? 0) !== (fleet.validators?.length ?? 0)) {
+            fleet = grown;
+            await writeFleet(fleetPath, fleet);
+          }
+        }
         // Validators added from outside (fleet-add) start trading validator money here.
         for (const spec of fleet.validators ?? []) {
           if (live.has(spec.name)) continue;
@@ -788,7 +807,8 @@ export async function main(argv: readonly string[]): Promise<number> {
         // 2. The fleet's consensus per strategy: every member's market votes, once a day.
         const consensus: Record<string, Consensus & { at: string }> = { ...fleet.consensus };
         const consensusOf = async (spec: BotSpec): Promise<Consensus | null> => {
-          const key = `${spec.strategy}@${spec.timeframe}`;
+          const tuned = spec.params && Object.keys(spec.params).length > 0 ? `#${candidateId(spec.strategy, spec.params)}` : '';
+          const key = `${spec.strategy}${tuned}@${spec.timeframe}`;
           const cached = consensus[key];
           if (cached && fresh(cached.at)) return cached;
           const members = [...fleet.bots, ...(fleet.validators ?? [])].filter((b) => b.timeframe === spec.timeframe);
@@ -1027,6 +1047,78 @@ export async function main(argv: readonly string[]): Promise<number> {
           ? 'The whale filter earns its place; add trend-hold-whales bots with fleet-add.'
           : 'The whale filter does not beat plain trend-hold by more than luck; the fleet keeps trend-hold.',
       ].join('\n') + '\n');
+      return 0;
+    }
+
+    case 'research-status': {
+      const dir = join(dirname(dirname(values.fleet as string)), 'research');
+      process.stdout.write(`${formatResearchStatus(await loadState(join(dir, 'state.json')))}\n`);
+      return 0;
+    }
+
+    case 'research': {
+      const fleetPath = values.fleet as string;
+      const dir = join(dirname(dirname(fleetPath)), 'research');
+      const statePath = join(dir, 'state.json');
+      const perRound = Math.trunc(num(values['per-round'], 'per-round'));
+      const intervalMs = num(values['interval-min'], 'interval-min') * 60_000;
+      const maxRounds = Math.trunc(num(values.iterations, 'iterations'));
+      // Always the fleet's own exchange, so the research coins are the ones the bots can actually trade.
+      const exchange = parseFleet(await readFile(fleetPath, 'utf8')).exchange;
+      const controller = new AbortController();
+      process.on('SIGINT', () => controller.abort());
+      const notifier = TelegramNotifier.fromEnv();
+      // Fixed parameters, the fleet's fee and a $2.50 account: the conditions the bots actually trade in.
+      const wf = {
+        ...DEFAULT_WF_OPTIONS,
+        config: {
+          ...config, startingEquity: 2.5, timeframe: '1d' as const,
+          costs: { ...config.costs, feeBps: 60 }, limits: { ...limits, maxDrawdownPct: 60 },
+        },
+      };
+      let state = await loadState(statePath);
+      process.stdout.write(`research: ${state.trials} candidates drawn so far, ${state.holdoutTests} holdout tests, ${state.confirmed.length} confirmed\n`);
+      for (let round = 1; !controller.signal.aborted; round += 1) {
+        const fleet = parseFleet(await readFile(fleetPath, 'utf8'));
+        const known = new Set([...fleet.bots, ...(fleet.validators ?? []), ...(fleet.reserve ?? [])].flatMap((b) => b.symbols));
+        const devSymbols = [...new Set([...fleet.bots, ...(fleet.validators ?? [])].filter((b) => b.timeframe === '1d').flatMap((b) => b.symbols))];
+        const dev = await loadDailyCoins(devSymbols, exchange);
+        // The holdout is every listed market the fleet has never touched, so nothing here was used to choose anything.
+        const holdout = await loadDailyCoins((await listMarkets(exchange, 'USD')).filter((m) => !known.has(m)), exchange);
+        const probe = [...dev.values()][0] ?? [];
+        process.stdout.write(`research round ${round}: ${dev.size} development coins, ${holdout.size} holdout coins\n`);
+        for (let k = 0; k < perRound && !controller.signal.aborted; k += 1) {
+          const trial = state.trials + 1;
+          state = { ...state, trials: trial, lastRunAt: new Date().toISOString() };
+          const candidate = sampleCandidate(trial, probe);
+          if (!candidate || state.recent.some((r) => r.id === candidate.id)) {
+            await saveState(statePath, state);
+            continue;
+          }
+          const factory = strategyFor({ strategy: candidate.strategy, params: candidate.params } as BotSpec);
+          const devMetrics = evaluateSet(factory, dev, wf);
+          const devPassed = passesDev(devMetrics);
+          let record: TrialRecord = { ...candidate, at: new Date().toISOString(), dev: devMetrics, devPassed };
+          state = { ...state, devPasses: state.devPasses + (devPassed ? 1 : 0) };
+          if (devPassed) {
+            state = { ...state, holdoutTests: state.holdoutTests + 1 };
+            const holdoutMetrics = evaluateSet(factory, holdout, wf);
+            const confirmedNow = passesHoldout(holdoutMetrics, state.holdoutTests);
+            record = { ...record, holdout: holdoutMetrics, confirmed: confirmedNow };
+            process.stdout.write(`research: lead ${candidate.id} ${candidate.strategy} ${JSON.stringify(candidate.params)}: holdout ${holdoutMetrics.beat}/${holdoutMetrics.n}, median ${holdoutMetrics.medRet.toFixed(0)}%, ${confirmedNow ? 'CONFIRMED' : 'not confirmed'}\n`);
+            if (confirmedNow) {
+              state = { ...state, confirmed: [...state.confirmed, { id: candidate.id, strategy: candidate.strategy, params: candidate.params, at: record.at }] };
+              await writeJsonAtomic(join(dir, 'confirmed.json'), state.confirmed);
+              await notifier.notify(`quant-bot research: ${candidate.strategy} ${JSON.stringify(candidate.params)} passed the holdout (${holdoutMetrics.beat}/${holdoutMetrics.n} beat shuffled, median ${holdoutMetrics.medRet.toFixed(0)}%). Added as a validator, not a trader.`).catch(() => undefined);
+            }
+          }
+          state = { ...state, recent: [...state.recent, record].slice(-200) };
+          await saveState(statePath, state);
+        }
+        await writeFile(join(dir, 'report.md'), `${formatResearchStatus(state)}\n`, 'utf8');
+        if (maxRounds > 0 && round >= maxRounds) break;
+        await waitFor(intervalMs, controller.signal);
+      }
       return 0;
     }
 
@@ -1417,6 +1509,26 @@ async function fleetFunds(
     });
   }
   return out;
+}
+
+/** Daily candles for each symbol that has at least 400 bars; failures are skipped, never guessed at. */
+async function loadDailyCoins(symbols: readonly string[], exchange: string): Promise<Map<string, Candle[]>> {
+  const rows = await mapPool([...symbols], 8, async (symbol) => {
+    try {
+      const candles = await fetchCandles({ exchange, symbol, timeframe: '1d', bars: 3000, cacheDir: 'data/cache' });
+      return candles.length >= 400 ? ([symbol, candles] as const) : null;
+    } catch {
+      return null;
+    }
+  });
+  return new Map(rows.filter((r): r is readonly [string, Candle[]] => r !== null));
+}
+
+function waitFor(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+  });
 }
 
 function fmtPct(v: number | null): string {

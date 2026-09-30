@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import type { Candle, Timeframe } from '../domain/types.ts';
 import { TIMEFRAME_MS } from '../domain/types.ts';
-import type { Params } from '../strategy/types.ts';
+import type { Params, StrategyFactory } from '../strategy/types.ts';
 import { STRATEGIES } from '../strategy/index.ts';
 import type { PaperStatus } from './status.ts';
 
@@ -365,7 +365,26 @@ export function addValidators(fleet: FleetFile, candidates: readonly BotSpec[]):
 
 export function sameTrade(a: BotSpec, b: BotSpec): boolean {
   return a.strategy === b.strategy && a.timeframe === b.timeframe
-    && a.symbols.length === b.symbols.length && a.symbols.every((s, i) => s === b.symbols[i]);
+    && a.symbols.length === b.symbols.length && a.symbols.every((s, i) => s === b.symbols[i])
+    && paramsKey(a.params) === paramsKey(b.params);
+}
+
+/** Order-independent form of a bot's parameter overrides; no overrides and an empty object are the same. */
+function paramsKey(params: Params | undefined): string {
+  return JSON.stringify(Object.entries(params ?? {}).sort(([x], [y]) => x.localeCompare(y)));
+}
+
+/**
+ * The strategy exactly as a bot runs it. A bot with its own parameters is
+ * tested at those parameters, fixed: leaving the walk-forward grid in place
+ * would re-tune them fold by fold and the test would no longer be about the
+ * parameters the bot actually trades.
+ */
+export function strategyFor(spec: BotSpec): StrategyFactory {
+  const factory = STRATEGIES[spec.strategy];
+  if (!factory) throw new Error(`unknown strategy "${spec.strategy}"`);
+  if (!spec.params || Object.keys(spec.params).length === 0) return factory;
+  return { ...factory, defaults: { ...factory.defaults, ...spec.params }, grid: {} };
 }
 
 /** One bot's money, read from its paper account. */
