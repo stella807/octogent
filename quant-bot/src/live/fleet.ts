@@ -25,6 +25,20 @@ export interface FundedBot {
   readonly fundedBy: Readonly<Record<string, number>>;
 }
 
+export interface BotLife {
+  readonly bornAt: string;
+  readonly validatedAt?: string;
+  readonly validation?: string;
+}
+
+export interface DeadBot {
+  readonly name: string;
+  readonly at: string;
+  readonly reason: string;
+  /** Cash it handed back to the treasury after selling what it held. */
+  readonly returned: number;
+}
+
 export interface FleetFile {
   readonly exchange: string;
   readonly createdAt: string;
@@ -32,6 +46,69 @@ export interface FleetFile {
   /** Bots waiting to be added, in order, once profits can pay for them. */
   readonly reserve?: readonly BotSpec[];
   readonly added?: readonly FundedBot[];
+  /** The fleet's starting money; profit is measured against it. */
+  readonly budget?: number;
+  /** Cash returned by bots that died, waiting to fund replacements. */
+  readonly treasury?: number;
+  readonly life?: Readonly<Record<string, BotLife>>;
+  readonly dead?: readonly DeadBot[];
+  /** Queued bots whose strategy failed validation before they ever traded. */
+  readonly rejected?: readonly { readonly name: string; readonly reason: string }[];
+}
+
+/**
+ * Yardsticks, not contestants: the coin flip measures luck and buy-and-hold
+ * measures the market. They are exempt from validation and never die,
+ * because the survival rules judge every other bot against them.
+ */
+const CONTROLS = new Set(['coin-flip', 'buy-and-hold']);
+
+export function isControl(strategy: string): boolean {
+  return CONTROLS.has(strategy);
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * How long a bot trades before its results can kill it. Days of P&L are
+ * mostly luck (a quarter of coin flips are up after any given week), so a
+ * daily bot gets a month and a one-minute bot, with ~1,440 decisions a day,
+ * gets a day.
+ */
+export const TRIAL_MS: Readonly<Record<string, number>> = { '1m': DAY_MS, '1d': 30 * DAY_MS };
+
+function trialFor(timeframe: Timeframe): number {
+  return TRIAL_MS[timeframe] ?? 30 * TIMEFRAME_MS[timeframe];
+}
+
+/** How often a living bot's strategy is re-validated against the latest data. */
+export const REVALIDATE_MS = DAY_MS;
+
+export interface Contestant {
+  readonly spec: BotSpec;
+  readonly status: PaperStatus;
+  readonly ageMs: number;
+  /** Latest walk-forward verdict; null if it has not been validated. */
+  readonly validation: { readonly passed: boolean; readonly reason: string } | null;
+}
+
+/**
+ * Why a bot dies now, or null if it lives. `controlPnlPct` is the coin-flip
+ * control's return at the same timeframe: losing money in a falling market
+ * is not a verdict on the strategy, doing worse than luck is.
+ */
+export function deathReason(bot: Contestant, controlPnlPct: number | null): string | null {
+  if (isControl(bot.spec.strategy)) return null;
+  if (bot.validation && !bot.validation.passed) return `failed validation: ${bot.validation.reason}`;
+  if (bot.status.killed) return `kill switch tripped: ${bot.status.killReason ?? 'unknown'}`;
+  if (bot.status.equity < minEquityFor(bot.spec)) {
+    return `too small to trade: $${bot.status.equity.toFixed(2)} is under what its orders need`;
+  }
+  if (bot.ageMs >= trialFor(bot.spec.timeframe) && bot.status.pnl < 0
+    && controlPnlPct !== null && bot.status.pnlPct < controlPnlPct) {
+    return `lost ${bot.status.pnlPct.toFixed(1)}% over its trial, worse than a coin flip (${controlPnlPct.toFixed(1)}%)`;
+  }
+  return null;
 }
 
 /** Each bot's account when no budget is given: ten bots, $250 in all. */
@@ -143,7 +220,18 @@ export function planCoreFleet(equity: number = DEFAULT_BOT_EQUITY): BotSpec[] {
  */
 export function planReserve(full: readonly BotSpec[], running: readonly BotSpec[]): BotSpec[] {
   const taken = new Set(running.map((b) => b.name));
-  return full.filter((b) => !taken.has(b.name) && canTrade(b));
+  const out: BotSpec[] = [];
+  for (const b of full) {
+    if (taken.has(b.name) || !canTrade(b) || [...running, ...out].some((r) => sameTrade(r, b))) continue;
+    out.push(b);
+  }
+  return out;
+}
+
+/** Two bots running one strategy on one market at one speed would only ever make the same trades. */
+export function sameTrade(a: BotSpec, b: BotSpec): boolean {
+  return a.strategy === b.strategy && a.timeframe === b.timeframe
+    && a.symbols.length === b.symbols.length && a.symbols.every((s, i) => s === b.symbols[i]);
 }
 
 /** One bot's money, read from its paper account. */
@@ -172,10 +260,16 @@ export interface BotFunds {
  */
 export function planExpansion(
   bots: readonly BotFunds[],
-  fleet: { readonly principal: number; readonly added: number; readonly cost: number },
+  fleet: {
+    readonly principal: number;
+    readonly added: number;
+    readonly cost: number;
+    /** Everything the fleet owns, treasury included; defaults to the bots' equity. */
+    readonly value?: number;
+  },
 ): Record<string, number> | null {
-  const equity = bots.reduce((sum, b) => sum + b.equity, 0);
-  if (equity - fleet.principal < fleet.cost * (fleet.added + 1)) return null;
+  const value = fleet.value ?? bots.reduce((sum, b) => sum + b.equity, 0);
+  if (value - fleet.principal < fleet.cost * (fleet.added + 1)) return null;
   const donors = bots
     .map((b) => ({ name: b.name, spare: Math.min(b.cash - b.startingCash, b.realized - b.withdrawn) }))
     .filter((d) => d.spare > 0)
@@ -251,6 +345,11 @@ export function parseFleet(json: string): FleetFile {
     bots: raw.bots as BotSpec[],
     reserve,
     added: Array.isArray(raw.added) ? raw.added : [],
+    ...(typeof raw.budget === 'number' ? { budget: raw.budget } : {}),
+    treasury: typeof raw.treasury === 'number' ? raw.treasury : 0,
+    life: raw.life ?? {},
+    dead: Array.isArray(raw.dead) ? raw.dead : [],
+    rejected: Array.isArray(raw.rejected) ? raw.rejected : [],
   };
 }
 
@@ -269,6 +368,9 @@ export interface ExpansionSummary {
   readonly queued: number;
   readonly profit: number;
   readonly needed: number;
+  readonly treasury?: number;
+  readonly dead?: readonly DeadBot[];
+  readonly rejected?: number;
 }
 
 export function formatFleetStatus(rows: readonly FleetRow[], expansion?: ExpansionSummary): string {
@@ -310,7 +412,13 @@ export function formatFleetStatus(rows: readonly FleetRow[], expansion?: Expansi
     anyStarted ||= started;
     if (started) lines.push(`  ${'group total'.padEnd(34)} ${`$${equity.toFixed(2)}`.padStart(8)} ${signed(pnl).padStart(8)}`);
   }
-  if (anyStarted) {
+  if (expansion) {
+    // Measured against the budget, so dead bots' losses still count.
+    const treasury = expansion.treasury ?? 0;
+    lines.push('', `ALL BOTS  $${(allEquity + treasury).toFixed(2)} now` +
+      (treasury > 0 ? ` ($${allEquity.toFixed(2)} in bots + $${treasury.toFixed(2)} treasury)` : '') +
+      `, profit ${signed(expansion.profit)}`);
+  } else if (anyStarted) {
     lines.push('', `ALL BOTS  $${allEquity.toFixed(2)} now, profit ${signed(allPnl)}`);
   }
   if (expansion) {
@@ -322,6 +430,13 @@ export function formatFleetStatus(rows: readonly FleetRow[], expansion?: Expansi
         ? `; the next bot needs ${expansion.needed > 0 ? `$${expansion.needed.toFixed(2)} more profit` : 'only for that profit to be banked in cash'}.`
         : '.'),
     );
+  }
+  if (expansion && (expansion.dead?.length || expansion.treasury || expansion.rejected)) {
+    lines.push('', `SURVIVAL  treasury $${(expansion.treasury ?? 0).toFixed(2)} from retired bots, ` +
+      `${expansion.dead?.length ?? 0} died, ${expansion.rejected ?? 0} never born (failed validation)`);
+    for (const d of (expansion.dead ?? []).slice(-10)) {
+      lines.push(`  ✝ ${d.name.padEnd(32)} ${d.reason}`);
+    }
   }
   lines.push(
     '',

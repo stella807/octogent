@@ -33,6 +33,12 @@ import { LiveRunner } from './live/runner.ts';
 import { TelegramNotifier } from './live/notifier.ts';
 import {
   botStatePath,
+  deathReason,
+  isControl,
+  REVALIDATE_MS,
+  sameTrade,
+  type BotLife,
+  type DeadBot,
   expansionProgress,
   formatFleetStatus,
   parseFleet,
@@ -615,6 +621,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       const fleet: FleetFile = {
         exchange,
         createdAt: new Date().toISOString(),
+        budget: bots.reduce((sum, b) => sum + b.equity, 0),
         bots,
         reserve: planReserve(full, bots),
         added: [],
@@ -633,7 +640,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       const initial = parseFleet(await readFile(fleetPath, 'utf8'));
       const exchange = initial.exchange;
       const controller = new AbortController();
-      const brokers = new Map<string, PaperBroker>();
+      const live = new Map<string, { broker: PaperBroker; stop: AbortController; run: Promise<void> }>();
       const runs: Promise<void>[] = [];
       const start = (spec: BotSpec): void => {
         const factory = getStrategy(spec.strategy);
@@ -646,7 +653,6 @@ export async function main(argv: readonly string[]): Promise<number> {
             exchange, symbol: sym, timeframe: tf, bars: count, cacheDir: 'data/cache', noCache: true,
           }),
         });
-        brokers.set(spec.name, broker);
         // No notifier: one message per fill across dozens of bots would bury anything that mattered.
         const runner = new LiveRunner({
           broker,
@@ -658,47 +664,173 @@ export async function main(argv: readonly string[]): Promise<number> {
           statePath,
           log: (message) => process.stdout.write(`[${spec.name}] ${message}\n`),
         }, spec.equity);
-        runs.push(runner.run(controller.signal));
+        const stop = new AbortController();
+        controller.signal.addEventListener('abort', () => stop.abort());
+        const run = runner.run(stop.signal);
+        live.set(spec.name, { broker, stop, run });
+        runs.push(run);
       };
       for (const spec of initial.bots) start(spec);
 
-      // Grows the fleet one bot at a time while profits can pay for it. Runs
-      // in this process because the donors' cash lives in these brokers: an
-      // edit to their files from outside would be overwritten on the next fill.
-      const expand = async (): Promise<void> => {
-        for (;;) {
-          const fleet = parseFleet(await readFile(fleetPath, 'utf8'));
-          const next = fleet.reserve?.[0];
-          if (!next) return;
-          const funds = await fleetFunds(fleet, fleetDir, priceCache(exchange));
-          const added = new Set((fleet.added ?? []).map((a) => a.name));
-          const principal = funds.filter((f) => !added.has(f.name)).reduce((sum, f) => sum + f.startingCash, 0);
-          const plan = planExpansion(funds, { principal, added: added.size, cost: next.equity });
-          if (!plan) return;
-          const fundedBy: Record<string, number> = {};
-          for (const [name, amount] of Object.entries(plan)) {
-            const donor = brokers.get(name);
-            if (donor) fundedBy[name] = await donor.withdraw(amount);
-          }
-          const spec: BotSpec = next;
-          await writeFleet(fleetPath, {
-            ...fleet,
-            bots: [...fleet.bots, spec],
-            reserve: (fleet.reserve ?? []).slice(1),
-            added: [...(fleet.added ?? []), { name: spec.name, at: new Date().toISOString(), fundedBy }],
+      /** Walk-forward on the bot's own market, fee and account size: the same test every strategy here has faced. */
+      const validate = async (spec: BotSpec): Promise<{ passed: boolean; reason: string } | null> => {
+        const symbol = spec.symbols[0] as string;
+        try {
+          const candles = await fetchCandles({
+            exchange, symbol, timeframe: spec.timeframe, bars: spec.timeframe === '1d' ? 3000 : 10_000, cacheDir: 'data/cache',
           });
-          process.stdout.write(
-            `[fleet] added ${spec.name}, paid for by ${Object.entries(fundedBy).map(([n, a]) => `${n} $${a.toFixed(2)}`).join(', ')}\n`,
-          );
-          start(spec);
+          const wfConfig: BacktestConfig = {
+            ...config,
+            startingEquity: spec.equity,
+            timeframe: spec.timeframe,
+            costs: { ...config.costs, feeBps: spec.feeBps },
+            limits: { ...limits, maxDrawdownPct: spec.maxDrawdownPct },
+          };
+          const row = screenSymbol(symbol, candles, getStrategy(spec.strategy), { ...DEFAULT_WF_OPTIONS, config: wfConfig });
+          return { passed: row.passed, reason: row.reason };
+        } catch {
+          // No verdict this round: a data outage is not evidence against a strategy.
+          return null;
+        }
+      };
+
+      /** Stops a bot, sells what it holds, and hands its cash back. Returns the cash. */
+      const retire = async (spec: BotSpec): Promise<number> => {
+        const bot = live.get(spec.name);
+        if (!bot) return 0;
+        bot.stop.abort();
+        await bot.run;
+        for (const symbol of spec.symbols) {
+          const { qty } = await bot.broker.balance(symbol);
+          if (qty <= 0) continue;
+          try {
+            await bot.broker.marketSell(symbol, qty);
+          } catch (error) {
+            // Under the $1 minimum it cannot be sold; it stays in the account, recorded as held.
+            process.stdout.write(`[fleet] ${spec.name} could not sell ${symbol}: ${error instanceof Error ? error.message : String(error)}\n`);
+          }
+        }
+        const { cash } = await bot.broker.balance(spec.symbols[0] as string);
+        live.delete(spec.name);
+        return bot.broker.withdraw(cash);
+      };
+
+      // Survival of the fittest, judged fairly: validate, retire, recycle,
+      // replace. Runs in this process because the bots' cash lives in these
+      // brokers; an edit to their files from outside would be overwritten.
+      const lifecycle = async (): Promise<void> => {
+        let fleet = parseFleet(await readFile(fleetPath, 'utf8'));
+        const nowMs = Date.now();
+        const now = new Date(nowMs).toISOString();
+        const life: Record<string, BotLife> = { ...fleet.life };
+        const budget = fleet.budget ?? fleet.bots
+          .filter((b) => !(fleet.added ?? []).some((a) => a.name === b.name))
+          .reduce((sum, b) => sum + b.equity, 0);
+
+        // 1. Every contestant re-proves its strategy once a day on the latest data.
+        const verdicts = new Map<string, { passed: boolean; reason: string } | null>();
+        for (const spec of fleet.bots) {
+          const current = (life[spec.name] ??= { bornAt: now });
+          if (isControl(spec.strategy)) continue;
+          if (current.validatedAt && nowMs - Date.parse(current.validatedAt) < REVALIDATE_MS) continue;
+          const verdict = await validate(spec);
+          verdicts.set(spec.name, verdict);
+          if (verdict) life[spec.name] = { ...current, validatedAt: now, validation: verdict.reason };
+        }
+
+        // 2. Judge every bot against the coin flip at its own speed.
+        const prices = priceCache(exchange);
+        const statuses = new Map<string, PaperStatus>();
+        for (const spec of fleet.bots) {
+          const status = await loadPaperStatus(botStatePath(fleetDir, spec.name), exchange, prices);
+          if (status) statuses.set(spec.name, status);
+        }
+        const coinFlip = (timeframe: string): number | null => {
+          const control = fleet.bots.find((b) => b.strategy === 'coin-flip' && b.timeframe === timeframe);
+          return control ? statuses.get(control.name)?.pnlPct ?? null : null;
+        };
+        const deaths: DeadBot[] = [];
+        let treasury = fleet.treasury ?? 0;
+        for (const spec of fleet.bots) {
+          const status = statuses.get(spec.name);
+          if (!status) continue;
+          const reason = deathReason({
+            spec,
+            status,
+            ageMs: nowMs - Date.parse(life[spec.name]?.bornAt ?? now),
+            validation: verdicts.get(spec.name) ?? null,
+          }, coinFlip(spec.timeframe));
+          if (!reason) continue;
+          const returned = await retire(spec);
+          treasury += returned;
+          deaths.push({ name: spec.name, at: now, reason, returned });
+          process.stdout.write(`[fleet] ${spec.name} died: ${reason}. Returned $${returned.toFixed(2)} to the treasury\n`);
+        }
+        const deadNames = new Set(deaths.map((d) => d.name));
+        fleet = {
+          ...fleet,
+          budget,
+          treasury,
+          life,
+          bots: fleet.bots.filter((b) => !deadNames.has(b.name)),
+          dead: [...(fleet.dead ?? []), ...deaths],
+        };
+        await writeFleet(fleetPath, fleet);
+
+        // 3. Births: the next queued contestant that validates, paid for by
+        //    dead bots' cash first, then by banked profit. Controls in the
+        //    queue are skipped: one yardstick per speed is enough.
+        for (;;) {
+          const next = (fleet.reserve ?? []).find((b) => !isControl(b.strategy) && !fleet.bots.some((r) => sameTrade(r, b)));
+          if (!next) return;
+          const funds = await fleetFunds(fleet, fleetDir, prices);
+          const value = funds.reduce((sum, f) => sum + f.equity, 0) + (fleet.treasury ?? 0);
+          const fromTreasury = (fleet.treasury ?? 0) >= next.equity;
+          const plan = fromTreasury ? null : planExpansion(funds, {
+            principal: budget, added: (fleet.added ?? []).length, cost: next.equity, value,
+          });
+          if (!fromTreasury && !plan) return;
+          const verdict = await validate(next);
+          const rest = (fleet.reserve ?? []).filter((b) => b.name !== next.name);
+          if (!verdict) return;
+          if (!verdict.passed) {
+            fleet = { ...fleet, reserve: rest, rejected: [...(fleet.rejected ?? []), { name: next.name, reason: verdict.reason }] };
+            await writeFleet(fleetPath, fleet);
+            process.stdout.write(`[fleet] ${next.name} was never born: ${verdict.reason}\n`);
+            continue;
+          }
+          let added = fleet.added ?? [];
+          let paidBy: string;
+          if (fromTreasury) {
+            fleet = { ...fleet, treasury: Number(((fleet.treasury ?? 0) - next.equity).toFixed(8)) };
+            paidBy = 'the treasury';
+          } else {
+            const fundedBy: Record<string, number> = {};
+            for (const [name, amount] of Object.entries(plan ?? {})) {
+              const donor = live.get(name);
+              if (donor) fundedBy[name] = await donor.broker.withdraw(amount);
+            }
+            added = [...added, { name: next.name, at: now, fundedBy }];
+            paidBy = Object.entries(fundedBy).map(([n, a]) => `${n} $${a.toFixed(2)}`).join(', ');
+          }
+          fleet = {
+            ...fleet,
+            bots: [...fleet.bots, next],
+            reserve: rest,
+            added,
+            life: { ...fleet.life, [next.name]: { bornAt: now, validatedAt: now, validation: verdict.reason } },
+          };
+          await writeFleet(fleetPath, fleet);
+          process.stdout.write(`[fleet] ${next.name} born (${verdict.reason}), paid for by ${paidBy}\n`);
+          start(next);
         }
       };
       const tick = (): void => {
-        expand().catch((error: unknown) => {
-          process.stdout.write(`[fleet] expansion check failed: ${error instanceof Error ? error.message : String(error)}\n`);
+        lifecycle().catch((error: unknown) => {
+          process.stdout.write(`[fleet] lifecycle check failed: ${error instanceof Error ? error.message : String(error)}\n`);
         });
       };
-      const timer = setInterval(tick, EXPANSION_CHECK_MS);
+      const timer = setInterval(tick, LIFECYCLE_CHECK_MS);
       setTimeout(tick, 60_000);
 
       process.on('SIGINT', () => {
@@ -708,7 +840,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       });
       process.stdout.write(
         `fleet: ${initial.bots.length} paper bots on ${exchange} (no real money), ` +
-        `${initial.reserve?.length ?? 0} queued to add as profits pay for them\n`,
+        `${initial.reserve?.length ?? 0} queued. Bots must validate and beat luck to live.\n`,
       );
       // One process, one shared rate-limited exchange connection: dozens of
       // separate processes would each open their own and trip the exchange's limits.
@@ -726,12 +858,22 @@ export async function main(argv: readonly string[]): Promise<number> {
         status: await loadPaperStatus(botStatePath(dirname(fleetPath), spec.name), fleet.exchange, prices),
       }));
       const added = new Set((fleet.added ?? []).map((a) => a.name));
-      const principal = rows.filter((r) => !added.has(r.spec.name)).reduce((sum, r) => sum + (r.status?.startingCash ?? r.spec.equity), 0);
-      const fleetEquity = rows.reduce((sum, r) => sum + (r.status?.equity ?? r.spec.equity), 0);
+      const principal = fleet.budget
+        ?? rows.filter((r) => !added.has(r.spec.name)).reduce((sum, r) => sum + (r.status?.startingCash ?? r.spec.equity), 0);
+      const treasury = fleet.treasury ?? 0;
+      const fleetEquity = rows.reduce((sum, r) => sum + (r.status?.equity ?? r.spec.equity), 0) + treasury;
       const expansion = {
         added: added.size,
         queued: fleet.reserve?.length ?? 0,
-        ...expansionProgress({ principal, fleetEquity, added: added.size, cost: fleet.reserve?.[0]?.equity ?? fleet.bots[0]?.equity ?? 0 }),
+        ...expansionProgress({
+          principal,
+          fleetEquity,
+          added: added.size,
+          cost: fleet.reserve?.[0]?.equity ?? fleet.bots[0]?.equity ?? 0,
+        }),
+        treasury,
+        dead: fleet.dead ?? [],
+        rejected: fleet.rejected?.length ?? 0,
       };
       if (values.json) emit({ rows, expansion });
       else process.stdout.write(`${formatFleetStatus(rows, expansion)}\n`);
@@ -981,8 +1123,8 @@ function priceCache(exchange: string): (symbol: string) => Promise<number | null
   };
 }
 
-/** How often the fleet checks whether profits can pay for another bot. */
-const EXPANSION_CHECK_MS = 60 * 60 * 1000;
+/** How often the fleet validates, retires and replaces bots. */
+const LIFECYCLE_CHECK_MS = 60 * 60 * 1000;
 
 async function rankTopCoins(exchange: string, quote: string, concurrency: number): Promise<string[]> {
   const markets = await listMarkets(exchange, quote);

@@ -822,6 +822,38 @@ give way to buy-and-hold ETH and trend-hold SOL, and 60 bots stay queued.
 One risk is specific to small accounts: a position that falls under $1 can
 no longer be sold, since the sell would be under the minimum too.
 
+**Survival: validate, beat luck, or die.** Once an hour `fleet` runs the
+lifecycle. Coin-flip and buy-and-hold bots are yardsticks and are exempt.
+
+- **Birth.** A queued bot is only born if its strategy passes the
+  walk-forward screen on its own market, speed, fee and account size (the
+  same screen as `screen`: 10 or more out-of-sample trades, 3 or more folds,
+  efficiency of at least 0.5, profitable out of sample). Money is spent only
+  after it passes.
+- **Re-validation.** Every living bot is re-tested once a day on the latest
+  data.
+- **Death.** A bot dies when:
+  - it fails a re-test;
+  - its kill switch trips;
+  - it is too small to place its orders; or
+  - after a trial (30 days daily, 1 day for 1-minute bots) it has lost
+    money and done worse than the coin flip at its own speed.
+
+  Losing in a falling market is not death; doing worse than luck is.
+- **Recycling.** A dying bot sells what it holds, and its cash goes to a
+  treasury. The treasury funds births first, and banked profit funds them
+  after that.
+
+The first round on the $25 fleet (2026-09-30):
+
+- **5 died.** trend-hold BTC had 9 out-of-sample trades, one short of the
+  rule; trend-hold SOL was curve-fit; and all three 1-minute strategies
+  failed, since they never make money in-sample.
+- **4 were born** from the treasury: trend-hold on XRP, ZEC, UNI and XLM.
+- **8 were never born:** NEAR, SUI, LINK and DOGE were curve-fit; BTC and
+  ADA had too few trades; QNT had too few folds; HYPE had too little
+  history.
+
 **Money each bot needs.** The binding limit is the $1 minimum order.
 Measured from each strategy's smallest entry over BTC history:
 full-position bots (trend-hold, buy-and-hold, coin-flip, every 1-minute bot)
