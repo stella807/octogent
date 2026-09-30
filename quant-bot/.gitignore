@@ -6,3 +6,4 @@ dist/
 data/cache/
 *.log
 .quant-bot/
+/dashboard/

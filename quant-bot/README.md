@@ -200,6 +200,7 @@ node --experimental-strip-types src/cli.ts compare \
 | `paper` | Live market data, simulated fills, no real money. One symbol or many on one account |
 | `status` | The paper account: equity, profit/loss, every open position, closed trades by symbol |
 | `swarm` | A crowd of rule-based traders forecasts P(up); `--evaluate` scores every past forecast |
+| `dashboard` | Writes `dashboard/market-eye.html`: every coin's forecast, the swarm's track record on it, its screen verdict and any paper position, in one page that opens from disk |
 | `live` | Real orders. Two independent gates stand in front of it. |
 
 ### Trading everything that passes, on one account

@@ -12,6 +12,9 @@ import { mapPool } from './concurrency.ts';
 import { buildSwarm, DEFAULT_SWARM, forecastAt } from './swarm/swarm.ts';
 import { evaluateSwarm } from './swarm/score.ts';
 import { formatScorecard, formatSwarmForecast } from './swarm/format.ts';
+import { assembleDashboard, renderDashboardPage, snapshotCoin, type CoinSnapshot } from './dashboard/build.ts';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { barsForRange, clipToRange, parseRange, type DateRange } from './data/range.ts';
 import { generateCandles } from './data/synthetic.ts';
 import { BENCHMARK_LIMITS, CONSERVATIVE_LIMITS, DEFAULT_LIMITS, type RiskLimits } from './risk/risk-manager.ts';
@@ -20,7 +23,7 @@ import { buyAndHold, getStrategy, STRATEGIES } from './strategy/index.ts';
 import type { Params } from './strategy/types.ts';
 import { PaperBroker, PRICE_LOOKBACK_MINUTES, readPaperAccount } from './live/paper-broker.ts';
 import { StateStore } from './live/state-store.ts';
-import { formatPaperStatus, paperAccountPath, paperStatus } from './live/status.ts';
+import { formatPaperStatus, paperAccountPath, paperStatus, type PaperStatus } from './live/status.ts';
 import { DEFAULT_SCREEN, failed as failedScreen, screenSymbol, shuffleBars, type ScreenCriteria, type ScreenRow } from './backtest/screen.ts';
 import { formatScreen, readScreenFile, screenPath, writeScreenFile } from './screen-file.ts';
 import { ExchangeBroker, LIVE_CONFIRM_ENV, LIVE_CONFIRM_VALUE } from './live/exchange-broker.ts';
@@ -48,6 +51,7 @@ quant-bot — crypto strategy research and paper trading
   status       Paper account profit/loss and every open position
   screen       Walk-forward test a strategy on every --quote market of an exchange; keep what passes
   swarm        Simulate a crowd of rule-based traders to forecast P(up); --evaluate scores it honestly
+  dashboard    Snapshot every screened coin (forecast, track record, screen, paper position) for the dashboard page
   live         Trade real funds. Requires --live and ${LIVE_CONFIRM_ENV}=${LIVE_CONFIRM_VALUE}
 
 Data (pick one; defaults to --synthetic so it runs with no network)
@@ -72,6 +76,7 @@ Common
   --horizon 1            swarm: bars ahead to forecast
   --paths 500            swarm: simulated futures per forecast (horizon > 1)
   --evaluate             swarm: score every past forecast instead of printing today's
+  --out path.html        dashboard: where to write the page (default dashboard/market-eye.html, data beside it as .json)
   --strategies A,B       Strategies to run at once, for the blend command
   --weights 0.5,0.5       Capital split for blend (default: equal)
   --timeframe 1d         1m 5m 15m 1h 4h 1d
@@ -111,6 +116,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       paths: { type: 'string', default: String(DEFAULT_SWARM.paths) },
       evaluate: { type: 'boolean', default: false },
       control: { type: 'boolean', default: false },
+      out: { type: 'string' },
       strategies: { type: 'string' },
       weights: { type: 'string' },
       exchange: { type: 'string', default: 'binance' },
@@ -381,28 +387,11 @@ export async function main(argv: readonly string[]): Promise<number> {
     }
 
     case 'status': {
-      const statePath = values.state as string;
-      const accountPath = paperAccountPath(statePath);
-      const account = await readPaperAccount(accountPath);
-      if (!account) {
-        process.stderr.write(`No paper account at ${accountPath}. Start one with the \`paper\` command.\n`);
+      const summary = await loadPaperStatus(values.state as string, values.exchange as string);
+      if (!summary) {
+        process.stderr.write(`No paper account at ${paperAccountPath(values.state as string)}. Start one with the \`paper\` command.\n`);
         return 1;
       }
-      const state = await new StateStore(statePath).load();
-      const prices: Record<string, number | null> = {};
-      for (const [symbol, qty] of Object.entries(account.holdings)) {
-        if (qty <= 0) continue;
-        try {
-          const recent = await fetchCandles({
-            exchange: values.exchange as string, symbol, timeframe: '1m', bars: PRICE_LOOKBACK_MINUTES, cacheDir: 'data/cache', noCache: true,
-          });
-          prices[symbol] = recent[recent.length - 1]?.close ?? null;
-        } catch {
-          // Unpriced positions are reported as such rather than guessed at.
-          prices[symbol] = null;
-        }
-      }
-      const summary = paperStatus(account, state, prices);
       if (values.json) emit(summary);
       else process.stdout.write(`${formatPaperStatus(summary)}\n`);
       return 0;
@@ -424,6 +413,49 @@ export async function main(argv: readonly string[]): Promise<number> {
       const forecast = forecastAt(state, last, horizon);
       if (values.json) emit(forecast);
       else process.stdout.write(`${formatSwarmForecast(forecast, symbol, timeframe, (candles[last] as Candle).close)}\n`);
+      return 0;
+    }
+
+    case 'dashboard': {
+      const exchange = values.exchange as string;
+      const statePath = values.state as string;
+      const screen = await readScreenFile(screenPath(statePath));
+      const universe = values.symbols
+        ? splitSymbols(values.symbols as string)
+        : screen?.rows.map((r) => r.symbol) ?? await listMarkets(exchange, values.quote as string);
+      const screenBySymbol = new Map((screen?.rows ?? []).map((r) => [r.symbol, r]));
+      const paper = await loadPaperStatus(statePath, exchange);
+      let done = 0;
+      const snapshots = await mapPool(universe, Math.trunc(num(values.concurrency, 'concurrency')), async (symbol) => {
+        let snap: CoinSnapshot | null = null;
+        try {
+          const candles = await fetchCandles({ exchange, symbol, timeframe: '1d', bars, cacheDir: 'data/cache' });
+          snap = snapshotCoin(symbol, candles, screenBySymbol.get(symbol), paper);
+        } catch {
+          // A market that won't load is left off the board rather than shown with invented numbers.
+        }
+        done += 1;
+        process.stderr.write(`[${done}/${universe.length}] ${symbol}\n`);
+        return snap;
+      });
+      const dashboard = assembleDashboard({
+        generatedAt: new Date(),
+        exchange,
+        strategy: screen?.strategy ?? (values.strategy as string),
+        coins: snapshots.filter((c): c is CoinSnapshot => c !== null),
+        screenRows: screen?.rows ?? [],
+        luck: screen?.luck ?? null,
+        paper,
+      });
+      const out = (values.out as string | undefined) ?? 'dashboard/market-eye.html';
+      const template = await readFile(new URL('./dashboard/template.html', import.meta.url), 'utf8');
+      await mkdir(dirname(out), { recursive: true });
+      await writeFile(out, renderDashboardPage(template, dashboard, true), 'utf8');
+      await writeFile(out.replace(/\.html$/, '') + '.json', JSON.stringify(dashboard), 'utf8');
+      process.stdout.write(
+        `Wrote ${out}: ${dashboard.coins.length} coins, ${dashboard.summary.forecastable} with a swarm track record, ` +
+        `${dashboard.summary.skilled} showing skill (${dashboard.summary.skilledByChance} expected by chance).\n`,
+      );
       return 0;
     }
 
@@ -646,6 +678,27 @@ async function loadContext(
   return { sentiment: alignSentiment(candles, sentiment) };
 }
 
+
+/** The paper account marked to current prices, or null when no account exists yet. */
+async function loadPaperStatus(statePath: string, exchange: string): Promise<PaperStatus | null> {
+  const account = await readPaperAccount(paperAccountPath(statePath));
+  if (!account) return null;
+  const state = await new StateStore(statePath).load();
+  const prices: Record<string, number | null> = {};
+  for (const [symbol, qty] of Object.entries(account.holdings)) {
+    if (qty <= 0) continue;
+    try {
+      const recent = await fetchCandles({
+        exchange, symbol, timeframe: '1m', bars: PRICE_LOOKBACK_MINUTES, cacheDir: 'data/cache', noCache: true,
+      });
+      prices[symbol] = recent[recent.length - 1]?.close ?? null;
+    } catch {
+      // Unpriced positions are reported as such rather than guessed at.
+      prices[symbol] = null;
+    }
+  }
+  return paperStatus(account, state, prices);
+}
 
 const DEFAULT_PORTFOLIO_UNIVERSE = 'BTC/USD,ETH/USD,SOL/USD,LTC/USD,LINK/USD,AVAX/USD';
 

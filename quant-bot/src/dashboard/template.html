@@ -1,0 +1,496 @@
+<title>Market Eye</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: an instrument panel. Snapshot bar + headline counts on top, one control row,
+     then every coin as a tile field beside a detail readout for the selected coin. */
+  :root {
+    color-scheme: dark;
+    --bg: #10151c;
+    --panel: #161d27;
+    --panel-2: #1c2531;
+    --line: #283343;
+    --ink: #e7ecf2;
+    --ink-2: #a3afc0;
+    --ink-3: #6f7c8e;
+    --up: #3987e5;
+    --down: #e66767;
+    --mid: #383835;
+    --good: #0ca30c;
+    --warn: #fab219;
+    --serious: #ec835a;
+    --focus: #86b6ef;
+    --font-display: "Chakra Petch", "Barlow", system-ui, sans-serif;
+    --font-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-data: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      color-scheme: light;
+      --bg: #f3f5f8; --panel: #ffffff; --panel-2: #f7f9fb; --line: #d8dfe7;
+      --ink: #0e141b; --ink-2: #4a5667; --ink-3: #6d7989;
+      --up: #2a78d6; --down: #e34948; --mid: #f0efec;
+      --good: #0b8a0b; --warn: #b87d00; --serious: #c9582d; --focus: #2a78d6;
+    }
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f3f5f8; --panel: #ffffff; --panel-2: #f7f9fb; --line: #d8dfe7;
+    --ink: #0e141b; --ink-2: #4a5667; --ink-3: #6d7989;
+    --up: #2a78d6; --down: #e34948; --mid: #f0efec;
+    --good: #0b8a0b; --warn: #b87d00; --serious: #c9582d; --focus: #2a78d6;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink); margin: 0;
+    font-family: var(--font-body); font-size: 15px; line-height: 1.45;
+  }
+  .wrap { max-width: 1400px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 40px; display: grid; gap: 18px; }
+  .num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+
+  header.top { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline; justify-content: space-between; }
+  h1 { font-family: var(--font-display); font-weight: 600; font-size: 1.9rem; letter-spacing: 0.04em; margin: 0; text-wrap: balance; }
+  h1 small { font-family: var(--font-body); font-weight: 500; font-size: 0.95rem; letter-spacing: 0; color: var(--ink-2); margin-left: 10px; }
+
+  .snapshot { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 0.9rem; color: var(--ink-2); }
+  .snapshot .badge {
+    font-family: var(--font-display); font-weight: 600; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 3px 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-2);
+  }
+  .snapshot.old .badge { border-color: var(--warn); color: var(--warn); }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; display: grid; gap: 2px; min-width: 0; }
+  .stat .k { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+  .stat .v { font-family: var(--font-data); font-size: 1.45rem; font-variant-numeric: tabular-nums; }
+  .stat .s { font-size: 0.82rem; color: var(--ink-2); }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); }
+  .seg button {
+    font: inherit; font-size: 0.86rem; color: var(--ink-2); background: transparent; border: 0; padding: 7px 12px; cursor: pointer;
+  }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--panel-2); color: var(--ink); box-shadow: inset 0 -2px 0 var(--focus); }
+  .controls label { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+  input[type="search"] {
+    font: inherit; font-size: 0.9rem; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; padding: 7px 10px; min-width: 0; width: 180px;
+  }
+  button:focus-visible, input:focus-visible, .tile:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; align-items: start; }
+  @media (max-width: 900px) { .main { grid-template-columns: minmax(0, 1fr); } }
+
+  .field { display: grid; gap: 10px; min-width: 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; font-size: 0.82rem; color: var(--ink-2); }
+  .ramp { display: inline-flex; align-items: center; gap: 8px; }
+  .ramp .bar { width: 180px; height: 10px; border-radius: 2px; }
+  .key { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 2px; }
+  .tile {
+    position: relative; border: 0; border-radius: 3px; padding: 7px 6px 6px; cursor: pointer; text-align: left;
+    min-height: 50px; display: grid; align-content: space-between; gap: 2px; color: var(--ink);
+    background: var(--mid); font: inherit;
+  }
+  .tile .sym { font-family: var(--font-display); font-weight: 600; font-size: 0.8rem; letter-spacing: 0.03em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tile .val { font-family: var(--font-data); font-size: 0.72rem; font-variant-numeric: tabular-nums; opacity: 0.85; }
+  .tile .mark { position: absolute; top: 5px; right: 6px; font-size: 0.7rem; line-height: 1; }
+  .tile.selected { outline: 2px solid var(--ink); outline-offset: -2px; }
+  .tile.stale { background: repeating-linear-gradient(135deg, var(--panel) 0 5px, var(--panel-2) 5px 10px); color: var(--ink-3); }
+  .tile.held::after { content: ""; position: absolute; left: 6px; right: 6px; bottom: 3px; height: 2px; border-radius: 1px; background: var(--ink); }
+  .empty { color: var(--ink-3); font-size: 0.9rem; padding: 20px 0; }
+
+  aside.detail { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 14px; position: sticky; top: env(safe-area-inset-top, 0px); min-width: 0; }
+  @media (max-width: 900px) { aside.detail { position: static; } }
+  .detail h2 { font-family: var(--font-display); font-size: 1.5rem; font-weight: 600; margin: 0; letter-spacing: 0.03em; }
+  .detail .price { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .detail .price .p { font-family: var(--font-data); font-size: 1.25rem; }
+  .chg.up { color: var(--up); } .chg.down { color: var(--down); }
+  .detail section { display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 12px; }
+  .detail h3 { font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); margin: 0; font-weight: 600; }
+  .row { display: flex; justify-content: space-between; gap: 12px; font-size: 0.9rem; }
+  .row span:first-child { color: var(--ink-2); flex: none; }
+  .row span:last-child { font-family: var(--font-data); font-variant-numeric: tabular-nums; text-align: right; min-width: 0; }
+  .verdict { font-size: 0.9rem; line-height: 1.4; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
+  .pill.good { color: var(--good); } .pill.none { color: var(--ink-2); } .pill.worse { color: var(--serious); } .pill.stale { color: var(--warn); }
+  .spark svg { display: block; width: 100%; height: auto; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { font-weight: 600; color: var(--ink-2); background: var(--panel); position: sticky; top: 0; cursor: pointer; }
+  td { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+  tbody tr:hover { background: var(--panel-2); }
+
+  footer { color: var(--ink-3); font-size: 0.85rem; max-width: 72ch; line-height: 1.55; }
+  footer code { font-family: var(--font-data); font-size: 0.82rem; color: var(--ink-2); }
+
+  #tip {
+    position: fixed; pointer-events: none; z-index: 10; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; padding: 8px 10px; font-size: 0.82rem; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); max-width: 260px;
+  }
+  #tip b { font-family: var(--font-display); }
+  @media (prefers-reduced-motion: no-preference) { .tile { transition: transform 80ms ease; } .tile:hover { transform: translateY(-1px); } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>Market Eye <small id="subtitle"></small></h1>
+    <div class="snapshot" id="snapshot"><span class="badge">Snapshot</span><span id="snapshot-text"></span></div>
+  </header>
+
+  <section class="stats" id="stats" aria-label="Summary"></section>
+
+  <div class="controls">
+    <label for="mode-lean">Color by</label>
+    <div class="seg" role="group" aria-label="Color tiles by">
+      <button id="mode-lean" data-mode="lean" aria-pressed="true">Swarm lean</button>
+      <button id="mode-track" data-mode="track" aria-pressed="false">Track record</button>
+      <button id="mode-move" data-mode="move" aria-pressed="false">30-day move</button>
+      <button id="mode-screen" data-mode="screen" aria-pressed="false">Screen</button>
+    </div>
+    <div class="seg" role="group" aria-label="View">
+      <button id="view-tiles" data-view="tiles" aria-pressed="true">Tiles</button>
+      <button id="view-table" data-view="table" aria-pressed="false">Table</button>
+    </div>
+    <input type="search" id="search" placeholder="Find a coin" aria-label="Find a coin">
+  </div>
+
+  <div class="main">
+    <div class="field">
+      <div class="legend" id="legend"></div>
+      <div class="grid" id="grid" role="list"></div>
+      <div class="tablewrap" id="tablewrap" hidden><table id="table"></table></div>
+    </div>
+    <aside class="detail" id="detail" aria-live="polite"></aside>
+  </div>
+
+  <footer id="footer"></footer>
+</div>
+<div id="tip" hidden></div>
+
+<script id="dashboard-data" type="application/json">__DASHBOARD_DATA__</script>
+<script>
+(function () {
+  'use strict';
+  var data = JSON.parse(document.getElementById('dashboard-data').textContent);
+  var DAY = 86400000;
+  var generated = new Date(data.generatedAt);
+  var coins = data.coins.map(function (c) {
+    return Object.assign({}, c, {
+      ticker: c.symbol.split('/')[0],
+      stale: generated.getTime() - c.lastTime > 3 * DAY,
+      held: !!c.position
+    });
+  });
+  var state = { mode: 'lean', view: 'tiles', query: '', selected: null, sortKey: 'symbol', sortDir: 1 };
+  try { state.mode = localStorage.getItem('eye.mode') || state.mode; } catch (e) { /* storage unavailable */ }
+  var held = coins.filter(function (c) { return c.held; })[0];
+  state.selected = (held || coins.filter(function (c) { return c.symbol === 'BTC/USD'; })[0] || coins[0]).symbol;
+
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function hexToRgb(h) { h = h.replace('#', ''); return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]; }
+  function mix(a, b, t) {
+    var x = hexToRgb(a), y = hexToRgb(b);
+    return 'rgb(' + x.map(function (v, i) { return Math.round(v + (y[i] - v) * t); }).join(',') + ')';
+  }
+  function luminance(rgb) {
+    var m = rgb.match(/\d+/g).map(Number).map(function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+    return 0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2];
+  }
+  function diverge(v, span) {
+    if (v === null || v === undefined || isNaN(v)) return null;
+    var t = Math.max(-1, Math.min(1, v / span));
+    return t >= 0 ? mix(css('--mid'), css('--up'), t) : mix(css('--mid'), css('--down'), -t);
+  }
+  function pct(v, d) { return v === null || v === undefined ? '—' : (v >= 0 ? '+' : '') + (v * 100).toFixed(d === undefined ? 1 : d) + '%'; }
+  function price(v) {
+    if (v === null || v === undefined) return '—';
+    var d = v >= 1000 ? 0 : v >= 1 ? 2 : v >= 0.01 ? 4 : 6;
+    return '$' + v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+  }
+  function money(v) { return v === null || v === undefined ? '—' : (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2); }
+  function fmtDate(t) { return new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+
+  var VERDICT = {
+    skill: { cls: 'good', icon: '✓', label: 'Proven skill' },
+    none: { cls: 'none', icon: '–', label: 'No evidence of skill' },
+    worse: { cls: 'worse', icon: '✕', label: 'Worse than guessing' }
+  };
+
+  function tileColor(c) {
+    if (c.stale) return null;
+    if (state.mode === 'lean') return c.forecast ? diverge(c.forecast.pUp - 0.5, 0.2) : null;
+    if (state.mode === 'move') return diverge(c.change30d, 0.4);
+    if (state.mode === 'track') {
+      if (!c.track) return null;
+      if (c.track.verdict === 'skill') return mix(css('--mid'), css('--good'), 0.75);
+      if (c.track.verdict === 'worse') return mix(css('--mid'), css('--serious'), 0.7);
+      return css('--mid');
+    }
+    if (!c.screen) return null;
+    return c.screen.passed ? mix(css('--mid'), css('--good'), 0.75) : css('--mid');
+  }
+  function tileValue(c) {
+    if (c.stale) return 'stale';
+    if (state.mode === 'lean') return c.forecast ? (c.forecast.pUp * 100).toFixed(0) + '% up' : 'too new';
+    if (state.mode === 'move') return pct(c.change30d, 0);
+    if (state.mode === 'track') return c.track ? 't ' + c.track.t.toFixed(1) : 'too new';
+    return c.screen ? (c.screen.passed ? 'pass' : 'fail') : '—';
+  }
+
+  function visible() {
+    var q = state.query.trim().toUpperCase();
+    return coins.filter(function (c) { return !q || c.symbol.toUpperCase().indexOf(q) !== -1; });
+  }
+
+  function renderStats() {
+    var s = data.summary;
+    var p = data.paper;
+    var items = [
+      { k: 'Coins watched', v: String(s.coins), s: s.forecastable + ' with enough history for a forecast' },
+      { k: 'Swarm with proven skill', v: String(s.skilled), s: s.skilledByChance + ' would pass by luck alone' },
+      { k: 'Swarm worse than guessing', v: String(s.worse), s: 'significantly, on these coins' },
+      { k: 'Screen passes', v: s.screenPassed + ' / ' + s.screenTested, s: s.luck ? s.luck.passed + ' pass with the days shuffled' : 'no luck control run' },
+      { k: 'Paper account', v: p ? money(p.equity) : '—', s: p ? (p.pnl >= 0 ? '+' : '') + money(p.pnl).replace('-', '−') + ' since start, ' + p.positions.length + ' open' : 'not started' }
+    ];
+    document.getElementById('stats').innerHTML = items.map(function (i) {
+      return '<div class="stat"><span class="k">' + i.k + '</span><span class="v">' + i.v + '</span><span class="s">' + i.s + '</span></div>';
+    }).join('');
+  }
+
+  function renderSnapshot() {
+    var ageH = (Date.now() - generated.getTime()) / 3600000;
+    var ago = ageH < 1 ? Math.round(ageH * 60) + ' minutes ago' : ageH < 48 ? Math.round(ageH) + ' hours ago' : Math.round(ageH / 24) + ' days ago';
+    document.getElementById('snapshot-text').textContent =
+      generated.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' }) +
+      ' · ' + ago + ' · not a live feed';
+    document.getElementById('snapshot').classList.toggle('old', ageH > 36);
+    document.getElementById('subtitle').textContent = data.exchange + ' · daily bars';
+  }
+
+  function renderLegend() {
+    var el = document.getElementById('legend');
+    var html;
+    if (state.mode === 'lean' || state.mode === 'move') {
+      var lo = state.mode === 'lean' ? '30% up' : '−40%';
+      var hi = state.mode === 'lean' ? '70% up' : '+40%';
+      var midLabel = state.mode === 'lean' ? '50/50' : '0%';
+      html = '<span class="ramp"><span class="num">' + lo + '</span><span class="bar" style="background:linear-gradient(90deg,' +
+        css('--down') + ',' + css('--mid') + ',' + css('--up') + ')"></span><span class="num">' + hi + '</span></span>' +
+        '<span>gray = ' + midLabel + '</span>';
+      if (state.mode === 'lean') html += '<span>Corner mark: ✓ proven skill · – no evidence · ✕ worse than guessing</span>';
+    } else if (state.mode === 'track') {
+      html = ['skill', 'none', 'worse'].map(function (k) {
+        var col = k === 'skill' ? mix(css('--mid'), css('--good'), 0.75) : k === 'worse' ? mix(css('--mid'), css('--serious'), 0.7) : css('--mid');
+        return '<span class="key"><span class="sw" style="background:' + col + '"></span>' + VERDICT[k].icon + ' ' + VERDICT[k].label + '</span>';
+      }).join('');
+    } else {
+      html = '<span class="key"><span class="sw" style="background:' + mix(css('--mid'), css('--good'), 0.75) + '"></span>Passed the walk-forward screen</span>' +
+        '<span class="key"><span class="sw" style="background:' + css('--mid') + '"></span>Failed</span>';
+    }
+    html += '<span class="key"><span class="sw" style="background:repeating-linear-gradient(135deg,' + css('--panel') + ' 0 3px,' + css('--panel-2') + ' 3px 6px);border:1px solid ' + css('--line') + '"></span>No trades for 3+ days</span>';
+    el.innerHTML = html;
+  }
+
+  function renderGrid() {
+    var grid = document.getElementById('grid');
+    var list = visible();
+    if (list.length === 0) { grid.innerHTML = '<p class="empty">No coin matches “' + state.query.replace(/[<>&]/g, '') + '”.</p>'; return; }
+    grid.innerHTML = '';
+    list.forEach(function (c) {
+      var b = document.createElement('button');
+      b.className = 'tile' + (c.stale ? ' stale' : '') + (c.held ? ' held' : '') + (c.symbol === state.selected ? ' selected' : '');
+      b.setAttribute('role', 'listitem');
+      b.dataset.symbol = c.symbol;
+      var bg = tileColor(c);
+      if (bg) {
+        b.style.background = bg;
+        b.style.color = luminance(bg) > 0.3 ? '#0e141b' : '#f4f7fb';
+      }
+      var mark = c.track && state.mode === 'lean' && !c.stale ? VERDICT[c.track.verdict].icon : '';
+      b.innerHTML = '<span class="sym"></span><span class="val"></span><span class="mark" aria-hidden="true"></span>';
+      b.querySelector('.sym').textContent = c.ticker;
+      b.querySelector('.val').textContent = tileValue(c);
+      b.querySelector('.mark').textContent = mark;
+      b.setAttribute('aria-label', c.symbol + ', ' + tileValue(c) + (c.track ? ', ' + VERDICT[c.track.verdict].label : '') + (c.held ? ', held in paper account' : ''));
+      grid.appendChild(b);
+    });
+  }
+
+  var COLUMNS = [
+    { key: 'symbol', label: 'Coin', get: function (c) { return c.symbol; }, fmt: function (v) { return v; } },
+    { key: 'last', label: 'Price', get: function (c) { return c.last; }, fmt: price },
+    { key: 'change30d', label: '30 days', get: function (c) { return c.change30d; }, fmt: function (v) { return pct(v); } },
+    { key: 'pUp', label: 'Swarm P(up)', get: function (c) { return c.forecast ? c.forecast.pUp : null; }, fmt: function (v) { return v === null ? '—' : (v * 100).toFixed(0) + '%'; } },
+    { key: 't', label: 'Track t', get: function (c) { return c.track ? c.track.t : null; }, fmt: function (v) { return v === null ? '—' : v.toFixed(2); } },
+    { key: 'verdict', label: 'Verdict', get: function (c) { return c.track ? VERDICT[c.track.verdict].label : c.stale ? 'stale' : 'too new'; }, fmt: function (v) { return v; } },
+    { key: 'screen', label: 'Screen', get: function (c) { return c.screen ? (c.screen.passed ? 'pass' : 'fail') : '—'; }, fmt: function (v) { return v; } }
+  ];
+  function renderTable() {
+    var col = COLUMNS.filter(function (c) { return c.key === state.sortKey; })[0];
+    var rows = visible().slice().sort(function (a, b) {
+      var x = col.get(a), y = col.get(b);
+      if (x === null) return 1; if (y === null) return -1;
+      return (x > y ? 1 : x < y ? -1 : 0) * state.sortDir;
+    });
+    var head = '<thead><tr>' + COLUMNS.map(function (c) {
+      var arrow = c.key === state.sortKey ? (state.sortDir > 0 ? ' ▲' : ' ▼') : '';
+      return '<th scope="col" data-key="' + c.key + '" tabindex="0">' + c.label + arrow + '</th>';
+    }).join('') + '</tr></thead>';
+    var body = '<tbody>' + rows.map(function (r) {
+      return '<tr data-symbol="' + r.symbol + '">' + COLUMNS.map(function (c) { return '<td>' + c.fmt(c.get(r)) + '</td>'; }).join('') + '</tr>';
+    }).join('') + '</tbody>';
+    document.getElementById('table').innerHTML = head + body;
+  }
+
+  function sparkline(values) {
+    var W = 320, H = 90, P = 4;
+    var lo = Math.min.apply(null, values), hi = Math.max.apply(null, values);
+    var span = hi - lo || 1;
+    var pts = values.map(function (v, i) {
+      return [P + (i / (values.length - 1)) * (W - 2 * P), P + (1 - (v - lo) / span) * (H - 2 * P)];
+    });
+    var line = pts.map(function (p, i) { return (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1); }).join(' ');
+    var area = line + ' L' + pts[pts.length - 1][0].toFixed(1) + ',' + (H - P) + ' L' + P + ',' + (H - P) + ' Z';
+    var up = values[values.length - 1] >= values[0];
+    var stroke = up ? 'var(--up)' : 'var(--down)';
+    var end = pts[pts.length - 1];
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Last ' + values.length + ' daily closes, from ' + price(values[0]) + ' to ' + price(values[values.length - 1]) + '">' +
+      '<line x1="' + P + '" x2="' + (W - P) + '" y1="' + (H - P) + '" y2="' + (H - P) + '" stroke="var(--line)" stroke-width="1"/>' +
+      '<path d="' + area + '" fill="' + stroke + '" fill-opacity="0.12"/>' +
+      '<path d="' + line + '" fill="none" stroke="' + stroke + '" stroke-width="2" stroke-linejoin="round"/>' +
+      '<circle cx="' + end[0].toFixed(1) + '" cy="' + end[1].toFixed(1) + '" r="4" fill="' + stroke + '" stroke="var(--panel)" stroke-width="2"/>' +
+      '</svg>';
+  }
+
+  function renderDetail() {
+    var c = coins.filter(function (x) { return x.symbol === state.selected; })[0];
+    var el = document.getElementById('detail');
+    if (!c) { el.innerHTML = '<p class="empty">Pick a coin to see its forecast and track record.</p>'; return; }
+    var h = [];
+    h.push('<div><h2>' + c.symbol + '</h2><div class="price"><span class="p">' + price(c.last) + '</span>' +
+      '<span class="chg ' + (c.change1d >= 0 ? 'up' : 'down') + ' num">' + pct(c.change1d, 2) + ' day</span>' +
+      '<span class="chg ' + (c.change30d >= 0 ? 'up' : 'down') + ' num">' + pct(c.change30d) + ' 30 days</span></div></div>');
+    if (c.stale) h.push('<div><span class="pill stale">⚠ No trades since ' + fmtDate(c.lastTime) + '</span></div>');
+    if (c.spark && c.spark.length > 1) h.push('<div class="spark">' + sparkline(c.spark) + '</div>');
+
+    h.push('<section><h3>Swarm forecast, next day</h3>');
+    if (c.forecast) {
+      h.push('<div class="row"><span>Chance it closes higher</span><span>' + (c.forecast.pUp * 100).toFixed(1) + '%</span></div>');
+      h.push('<div class="row"><span>Crowd net demand</span><span>' + (c.forecast.netDemand >= 0 ? '+' : '') + c.forecast.netDemand.toFixed(2) + '</span></div>');
+      h.push('<div class="row"><span>Largest style</span><span>' + c.forecast.leadingStyle + ', ' + (c.forecast.leadingShare * 100).toFixed(0) + '%</span></div>');
+      if (c.forecast.impact === 0) h.push('<p class="verdict">The crowd has shown no recent predictive power on this coin, so this is just its recent up-rate.</p>');
+    } else {
+      h.push('<p class="verdict">' + (c.bars < 400 ? 'Only ' + c.bars + ' days of history: too new to forecast.' : 'No forecast.') + '</p>');
+    }
+    h.push('</section>');
+
+    h.push('<section><h3>Swarm track record on this coin</h3>');
+    if (c.track) {
+      var v = VERDICT[c.track.verdict];
+      h.push('<div><span class="pill ' + v.cls + '">' + v.icon + ' ' + v.label + '</span></div>');
+      h.push('<div class="row"><span>Past forecasts scored</span><span>' + c.track.n.toLocaleString('en-US') + '</span></div>');
+      h.push('<div class="row"><span>Skill vs historical up-rate</span><span>' + pct(c.track.skill, 2) + '</span></div>');
+      h.push('<div class="row"><span>t-statistic</span><span>' + c.track.t.toFixed(2) + '</span></div>');
+      h.push('<div class="row"><span>Direction right</span><span>' + (c.track.directionRight * 100).toFixed(1) + '%</span></div>');
+      h.push('<p class="verdict">Each forecast used only earlier days. A t-statistic of 2 or more would mean it beat the up-rate by more than luck.</p>');
+    } else {
+      h.push('<p class="verdict">Not enough history to score.</p>');
+    }
+    h.push('</section>');
+
+    h.push('<section><h3>Walk-forward screen (' + data.strategy + ')</h3>');
+    if (c.screen) {
+      h.push('<div><span class="pill ' + (c.screen.passed ? 'good' : 'none') + '">' + (c.screen.passed ? '✓ Passed' : '– Failed') + '</span></div>');
+      h.push('<p class="verdict">' + c.screen.reason.replace(/[<>&]/g, '') + '</p>');
+    } else {
+      h.push('<p class="verdict">Not screened.</p>');
+    }
+    h.push('</section>');
+
+    if (c.position) {
+      h.push('<section><h3>Paper position</h3>');
+      h.push('<div class="row"><span>Holding</span><span>' + c.position.qty.toFixed(6) + '</span></div>');
+      h.push('<div class="row"><span>Entry</span><span>' + price(c.position.entryPrice) + '</span></div>');
+      h.push('<div class="row"><span>Stop</span><span>' + price(c.position.stopPrice) + '</span></div>');
+      h.push('<div class="row"><span>Unrealized</span><span>' + money(c.position.unrealized) + '</span></div>');
+      h.push('</section>');
+    }
+    el.innerHTML = h.join('');
+  }
+
+  function renderFooter() {
+    document.getElementById('footer').innerHTML =
+      'Every number here comes from closed daily bars on ' + data.exchange + ' up to the snapshot time. The page cannot fetch prices itself, ' +
+      'so it shows exactly what quant-bot computed then. Refresh it with <code>pnpm cli dashboard --exchange ' + data.exchange + ' --bars 2000</code>, ' +
+      'which writes a new <code>dashboard/market-eye.html</code>. The swarm is a rule-based crowd of trend followers and contrarians; its track ' +
+      'record on each coin is scored against that coin\'s own recent up-rate.';
+  }
+
+  function renderAll() {
+    renderLegend();
+    document.getElementById('grid').hidden = state.view !== 'tiles';
+    document.getElementById('tablewrap').hidden = state.view !== 'table';
+    if (state.view === 'tiles') renderGrid(); else renderTable();
+    renderDetail();
+  }
+
+  document.querySelectorAll('[data-mode]').forEach(function (b) {
+    b.setAttribute('aria-pressed', String(b.dataset.mode === state.mode));
+    b.addEventListener('click', function () {
+      state.mode = b.dataset.mode;
+      try { localStorage.setItem('eye.mode', state.mode); } catch (e) { /* storage unavailable */ }
+      document.querySelectorAll('[data-mode]').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+      renderAll();
+    });
+  });
+  document.querySelectorAll('[data-view]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      state.view = b.dataset.view;
+      document.querySelectorAll('[data-view]').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+      renderAll();
+    });
+  });
+  document.getElementById('search').addEventListener('input', function (e) { state.query = e.target.value; renderAll(); });
+  document.getElementById('grid').addEventListener('click', function (e) {
+    var t = e.target.closest('.tile'); if (!t) return;
+    state.selected = t.dataset.symbol; renderAll();
+    if (window.matchMedia('(max-width: 900px)').matches) document.getElementById('detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  document.getElementById('table').addEventListener('click', function (e) {
+    var th = e.target.closest('th');
+    if (th) { var k = th.dataset.key; state.sortDir = state.sortKey === k ? -state.sortDir : 1; state.sortKey = k; renderTable(); return; }
+    var tr = e.target.closest('tr[data-symbol]');
+    if (tr) { state.selected = tr.dataset.symbol; renderDetail(); }
+  });
+
+  var tip = document.getElementById('tip');
+  document.getElementById('grid').addEventListener('pointermove', function (e) {
+    var t = e.target.closest('.tile'); if (!t) { tip.hidden = true; return; }
+    var c = coins.filter(function (x) { return x.symbol === t.dataset.symbol; })[0];
+    tip.innerHTML = '<b></b><br><span class="num"></span>';
+    tip.querySelector('b').textContent = c.symbol;
+    tip.querySelector('span').textContent = price(c.last) + ' · ' + tileValue(c) + (c.track ? ' · ' + VERDICT[c.track.verdict].label : '');
+    tip.hidden = false;
+    var x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+    var y = Math.min(e.clientY + 14, window.innerHeight - tip.offsetHeight - 8);
+    tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  });
+  document.getElementById('grid').addEventListener('pointerleave', function () { tip.hidden = true; });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
+  new MutationObserver(renderAll).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  renderSnapshot();
+  renderStats();
+  renderFooter();
+  renderAll();
+})();
+</script>
