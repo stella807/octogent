@@ -200,6 +200,7 @@ node --experimental-strip-types src/cli.ts compare \
 | `paper` | Live market data, simulated fills, no real money. One symbol or many on one account |
 | `status` | The paper account: equity, profit/loss, every open position, closed trades by symbol. `--live` reads the real exchange account instead |
 | `swarm` | A crowd of rule-based traders forecasts P(up); `--evaluate` scores every past forecast |
+| `binary` | Fixed-payout up/down bets on past prices: the swarm, a strategy, always-up and a coin flip against the breakeven hit rate |
 | `dashboard` | Writes `dashboard/market-eye.html`: every coin's forecast, the swarm's track record on it, its screen verdict and any paper position, in one page that opens from disk |
 | `live` | Real orders. Two independent gates stand in front of it. |
 
@@ -742,6 +743,37 @@ and none of that protection.
 
 The grid wins more than three trades in four and still loses money, because
 it is most heavily loaded exactly when price is falling hardest.
+
+## Binary options — simulated, and why there is no live version
+
+`binary` bets up or down at each close, settles `--expiry` bars later, pays
+`--payout` percent on a win and takes the whole stake on a loss. At the
+typical 80% payout a bet only breaks even at a **55.6%** hit rate, so a
+signal has to beat a coin flip by more than five points just to stand still.
+
+```bash
+pnpm cli binary --exchange coinbase --symbol BTC/USD --timeframe 1d --bars 3000 --equity 10000
+```
+
+Real Coinbase BTC, 80% payout, 2% of equity per bet (2026-09-30):
+
+| Signal | Daily, ~8 years: hit rate | Daily: $10,000 became | Hourly, ~4 months: hit rate | Hourly: $10,000 became |
+|---|---|---|---|---|
+| swarm | 51.2% | $114 | 48.7% | $0.93, bust |
+| donchian-breakout | 48.0% | $4,561 | 45.8% | $4,742 |
+| always up | 50.9% | $42 | 50.1% | $0.87, bust |
+| coin flip | 50.4% | $13 | 51.5% | $77 |
+
+Every signal sits two to six standard errors *below* breakeven. On a $25
+account it is quicker still: a $1 minimum bet is 4% of the account, and
+every signal went bust, the coin flip within 98 days.
+
+There is deliberately no live version. Binary options are banned for retail
+in the EU, UK and Canada; in the US they are legal only on CFTC-regulated
+exchanges, and regulators' fraud warnings cover the offshore platforms most
+people are shown on social media. The regulated alternative is event
+contracts (Kalshi, Polymarket), where the same breakeven arithmetic applies
+through the price you pay.
 
 ## A free swarm simulator, scored honestly
 

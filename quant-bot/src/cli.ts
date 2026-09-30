@@ -11,6 +11,7 @@ import { fetchCandles, listMarkets } from './data/exchange.ts';
 import { mapPool } from './concurrency.ts';
 import { buildSwarm, DEFAULT_SWARM, forecastAt } from './swarm/swarm.ts';
 import { evaluateSwarm } from './swarm/score.ts';
+import { coinFlip, formatBinary, runBinary, type BinaryOptions, type Call } from './backtest/binary.ts';
 import { formatScorecard, formatSwarmForecast } from './swarm/format.ts';
 import { assembleDashboard, renderDashboardPage, snapshotCoin, type CoinSnapshot } from './dashboard/build.ts';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -52,6 +53,7 @@ quant-bot — crypto strategy research and paper trading
   status       Paper account profit/loss and every open position; --live reads your real exchange account
   screen       Walk-forward test a strategy on every --quote market of an exchange; keep what passes
   swarm        Simulate a crowd of rule-based traders to forecast P(up); --evaluate scores it honestly
+  binary       Bet up/down with fixed-payout binary options on past prices; every signal vs a coin flip
   dashboard    Snapshot every screened coin (forecast, track record, screen, paper position) for the dashboard page
   live         Trade real funds. Requires --live and ${LIVE_CONFIRM_ENV}=${LIVE_CONFIRM_VALUE}
 
@@ -77,6 +79,9 @@ Common
   --horizon 1            swarm: bars ahead to forecast
   --paths 500            swarm: simulated futures per forecast (horizon > 1)
   --evaluate             swarm: score every past forecast instead of printing today's
+  --expiry 1             binary: bars until a bet settles
+  --payout 80            binary: % profit on a winning bet (a loss costs the whole stake)
+  --stake-pct 2          binary: % of equity staked per bet
   --out path.html        dashboard: where to write the page (default dashboard/market-eye.html, data beside it as .json)
   --strategies A,B       Strategies to run at once, for the blend command
   --weights 0.5,0.5       Capital split for blend (default: equal)
@@ -116,6 +121,9 @@ export async function main(argv: readonly string[]): Promise<number> {
       horizon: { type: 'string', default: '1' },
       paths: { type: 'string', default: String(DEFAULT_SWARM.paths) },
       evaluate: { type: 'boolean', default: false },
+      expiry: { type: 'string', default: '1' },
+      payout: { type: 'string', default: '80' },
+      'stake-pct': { type: 'string', default: '2' },
       control: { type: 'boolean', default: false },
       out: { type: 'string' },
       strategies: { type: 'string' },
@@ -429,6 +437,38 @@ export async function main(argv: readonly string[]): Promise<number> {
       const forecast = forecastAt(state, last, horizon);
       if (values.json) emit(forecast);
       else process.stdout.write(`${formatSwarmForecast(forecast, symbol, timeframe, (candles[last] as Candle).close)}\n`);
+      return 0;
+    }
+
+    case 'binary': {
+      const candles = await loadData();
+      const options: BinaryOptions = {
+        expiryBars: Math.trunc(num(values.expiry, 'expiry')),
+        payout: num(values.payout, 'payout') / 100,
+        stakePct: num(values['stake-pct'], 'stake-pct') / 100,
+        minStake: config.costs.minOrderNotional,
+        startingEquity: config.startingEquity,
+      };
+      const factory = getStrategy(values.strategy as string);
+      const strategy = factory.create(candles, { ...factory.defaults, ...overrides });
+      const swarm = buildSwarm(candles, { ...DEFAULT_SWARM, paths: Math.trunc(num(values.paths, 'paths')) });
+      const signals: { label: string; predict: (t: number) => Call | null }[] = [
+        {
+          label: 'swarm',
+          predict: (t) => {
+            if (t < swarm.warmup) return null;
+            const p = forecastAt(swarm, t, options.expiryBars).pUp;
+            return p > 0.5 ? 'up' : p < 0.5 ? 'down' : null;
+          },
+        },
+        // Strategies here are long-only, so "flat" means no bet rather than a down call.
+        { label: factory.name, predict: (t) => (strategy.signalAt(t, null).target > 0 ? 'up' : null) },
+        { label: 'always up', predict: () => 'up' },
+        { label: 'coin flip', predict: coinFlip(Math.trunc(num(values.seed, 'seed'))) },
+      ];
+      const rows = signals.map(({ label, predict }) => ({ label, result: runBinary(candles, predict, options) }));
+      if (values.json) emit(rows.map(({ label, result }) => ({ label, ...result, bets: result.bets.length })));
+      else process.stdout.write(`${formatBinary(rows, options, values.synthetic ? 'synthetic' : values.symbol as string, timeframe)}\n`);
       return 0;
     }
 
