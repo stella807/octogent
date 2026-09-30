@@ -949,6 +949,34 @@ say whether they are good, only that it cannot tell. That is not evidence
 for them. None replaces trend-hold. They run as validators on BTC and ETH,
 collecting live evidence with validator money.
 
+**trend-vote, and a gap in the fleet's test (2026-09-30).** `trend-vote`
+holds while at least 2 of 3 trend tests agree (price above its 50-, 100- and
+200-bar averages), with an entry band for hysteresis. It is all in or all out,
+because the live runner cannot scale positions.
+
+- **The fleet's own vote rejects it:** 0 of 38 coins pass, but only because it
+  averages 5.4 out-of-sample trades per coin, and 34 of 38 fail the
+  10-trade minimum before profit is judged. That minimum structurally
+  rejects slow trend rules on coins with 2-4 years of history, so the vote
+  cannot tell whether `trend-vote` is good or merely slow.
+- **A second measure, chosen after seeing that result, so weigh it
+  accordingly:** on each coin, does the out-of-sample return beat the same
+  strategy on that coin's shuffled prices (median of 5 shuffles)?
+
+  | | Beats shuffled | Profitable out of sample | Median return | Median worst drop |
+  |---|---|---|---|---|
+  | trend-hold | 21 of 38 | 11 of 38 | -60% | 59% |
+  | trend-vote | 30 of 38 | 22 of 38 | +10% | 36% |
+
+  Caveats: crypto coins are highly correlated, so 38 coins are fewer than 38
+  independent tests; and much of the gain is avoiding crashes in a period
+  when the typical coin lost ~80% if held. Protection, not proven profit.
+
+The fleet's rules were not loosened to admit it. `trend-vote` runs as a
+validator on BTC, ETH, ZEC, UNI, XLM and VVV, gathering live evidence with
+validator money, and reaches real money only through the existing promotion
+rules.
+
 **TradingView data.** TradingView has no public data API, and the
 unofficial scrapers break its terms, so the fleet does not pull from it. Its
 `COINBASE:` charts show Coinbase's own feed, which is what the bots already

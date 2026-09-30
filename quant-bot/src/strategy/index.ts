@@ -16,6 +16,7 @@ import { trendHold } from './trend-hold.ts';
 import { coinFlipStrategy } from './coin-flip.ts';
 import { trendHoldWhales } from './trend-hold-whales.ts';
 import { trendHoldDual, trendHoldSlope, trendHoldTrail } from './trend-hold-variants.ts';
+import { trendVote } from './trend-vote.ts';
 import type { StrategyFactory } from './types.ts';
 
 export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
@@ -39,6 +40,7 @@ export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
   [trendHoldDual.name]: trendHoldDual,
   [trendHoldTrail.name]: trendHoldTrail,
   [trendHoldSlope.name]: trendHoldSlope,
+  [trendVote.name]: trendVote,
 };
 
 export function getStrategy(name: string): StrategyFactory {
