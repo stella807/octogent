@@ -27,6 +27,8 @@ export interface PaperAccount {
   /** Base-currency quantity held, per symbol. */
   readonly holdings: Readonly<Record<string, number>>;
   readonly fills: readonly Fill[];
+  /** Cash moved out to fund other bots. Still this account's profit, just no longer in it. */
+  readonly withdrawn: number;
 }
 
 /**
@@ -45,6 +47,9 @@ export class PaperBroker implements Broker {
 
   #startingCash: number;
   #cash: number;
+  #withdrawn = 0;
+  /** Saves run one after another: two overlapping write-then-renames of one file can lose the later state. */
+  #saving: Promise<void> = Promise.resolve();
   readonly #holdings = new Map<string, number>();
   readonly #costs: CostModel;
   readonly #feed: PaperBrokerOptions['feed'];
@@ -118,6 +123,16 @@ export class PaperBroker implements Broker {
     return this.#record({ symbol, side: 'sell', qty: sellQty, price, fee, time: Date.now() });
   }
 
+  /** Takes up to `amount` of cash out of the account; returns what was actually taken. */
+  async withdraw(amount: number): Promise<number> {
+    await this.#load();
+    const taken = Math.max(0, Math.min(amount, this.#cash));
+    this.#cash -= taken;
+    this.#withdrawn += taken;
+    await this.#save();
+    return taken;
+  }
+
   async #record(fill: Fill): Promise<Fill> {
     this.fills.push(fill);
     await this.#save();
@@ -137,26 +152,33 @@ export class PaperBroker implements Broker {
       // re-fund it, or restarts would turn every loss back into fresh cash.
       this.#startingCash = account.startingCash;
       this.#cash = account.cash;
+      this.#withdrawn = account.withdrawn;
       for (const [symbol, qty] of Object.entries(account.holdings)) this.#holdings.set(symbol, qty);
       this.fills.push(...account.fills);
     })();
     return this.#loaded;
   }
 
-  async #save(): Promise<void> {
-    if (!this.#accountPath) return;
-    const account: PaperAccount = {
-      startingCash: this.#startingCash,
-      cash: this.#cash,
-      holdings: Object.fromEntries(this.#holdings),
-      fills: this.fills,
-    };
-    await mkdir(dirname(this.#accountPath), { recursive: true });
-    // Write-then-rename, so a crash mid-write leaves the previous account
-    // intact rather than a truncated file that loads as a fresh one.
-    const tmp = `${this.#accountPath}.tmp`;
-    await writeFile(tmp, JSON.stringify(account, null, 2), 'utf8');
-    await rename(tmp, this.#accountPath);
+  #save(): Promise<void> {
+    const path = this.#accountPath;
+    if (!path) return Promise.resolve();
+    // The snapshot is taken when the save runs, so the last save queued always writes the latest state.
+    this.#saving = this.#saving.catch(() => undefined).then(async () => {
+      const account: PaperAccount = {
+        startingCash: this.#startingCash,
+        cash: this.#cash,
+        holdings: Object.fromEntries(this.#holdings),
+        fills: this.fills,
+        withdrawn: this.#withdrawn,
+      };
+      await mkdir(dirname(path), { recursive: true });
+      // Write-then-rename, so a crash mid-write leaves the previous account
+      // intact rather than a truncated file that loads as a fresh one.
+      const tmp = `${path}.tmp`;
+      await writeFile(tmp, JSON.stringify(account, null, 2), 'utf8');
+      await rename(tmp, path);
+    });
+    return this.#saving;
   }
 }
 
@@ -169,6 +191,7 @@ export async function readPaperAccount(path: string): Promise<PaperAccount | nul
       cash: parsed.cash,
       holdings: parsed.holdings ?? {},
       fills: parsed.fills ?? [],
+      withdrawn: parsed.withdrawn ?? 0,
     };
   } catch {
     return null;

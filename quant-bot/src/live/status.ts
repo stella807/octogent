@@ -32,8 +32,11 @@ export interface PaperStatus {
   readonly equity: number;
   /** True when some position could not be priced and is carried at its entry price. */
   readonly partial: boolean;
+  /** Profit including cash moved out to fund other bots. */
   readonly pnl: number;
   readonly pnlPct: number;
+  /** Cash this account gave to fund other bots; counted in its profit, not its equity. */
+  readonly withdrawn: number;
   readonly buys: number;
   readonly sells: number;
   readonly feesPaid: number;
@@ -67,7 +70,7 @@ export function paperStatus(
       };
     });
   const equity = account.cash + positions.reduce((sum, p) => sum + (p.value ?? 0), 0);
-  const pnl = equity - account.startingCash;
+  const pnl = equity + account.withdrawn - account.startingCash;
   return {
     startingCash: account.startingCash,
     cash: account.cash,
@@ -75,6 +78,7 @@ export function paperStatus(
     partial: positions.some((p) => p.price === null),
     pnl,
     pnlPct: account.startingCash > 0 ? (pnl / account.startingCash) * 100 : 0,
+    withdrawn: account.withdrawn,
     buys: account.fills.filter((f) => f.side === 'buy').length,
     sells: account.fills.filter((f) => f.side === 'sell').length,
     feesPaid: account.fills.reduce((sum, f) => sum + f.fee, 0),
@@ -115,6 +119,7 @@ export function formatPaperStatus(s: PaperStatus): string {
     `  Cash now                     ${money(s.cash)}`,
     `  Equity now                   ${money(s.equity)}${s.partial ? '  (some positions unpriced; carried at entry price)' : ''}`,
     `  Profit / loss                ${signed(s.pnl)}  (${s.pnlPct >= 0 ? '+' : ''}${s.pnlPct.toFixed(2)}%)`,
+    ...(s.withdrawn > 0 ? [`  Paid out to fund new bots     ${money(s.withdrawn)}  (counted in profit above)`] : []),
     `  Fills                        ${s.buys} buys, ${s.sells} sells, ${money(s.feesPaid)} in fees`,
   ];
 

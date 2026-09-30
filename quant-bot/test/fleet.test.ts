@@ -123,7 +123,7 @@ describe('parseFleet', () => {
 describe('formatFleetStatus', () => {
   const status = (equity: number, fees: number): PaperStatus => ({
     startingCash: 25, cash: equity, equity, partial: false, pnl: equity - 25, pnlPct: (equity / 25 - 1) * 100,
-    buys: 1, sells: 1, feesPaid: fees, positions: [], realizedBySymbol: {}, killed: false, killReason: null,
+    withdrawn: 0, buys: 1, sells: 1, feesPaid: fees, positions: [], realizedBySymbol: {}, killed: false, killReason: null,
   });
   const spec = (name: string, strategy: string): BotSpec => ({
     name, group: 'fast (1-minute)', strategy, symbols: ['BTC/USD'], timeframe: '1m', equity: 25, feeBps: 60, maxDrawdownPct: 15,
@@ -137,7 +137,14 @@ describe('formatFleetStatus', () => {
     ]);
     expect(text).toMatch(/fast \(1-minute\)/i);
     expect(text).toMatch(/-\$8\.00/);
+    expect(text).toMatch(/ALL BOTS  \$42\.00 now, profit -\$8\.00/);
     expect(text).toMatch(/coin-flip/);
     expect(text).toMatch(/not started/);
+  });
+
+  it('says how far the fleet is from paying for its next bot', () => {
+    const text = formatFleetStatus([], { added: 1, queued: 63, profit: 30, needed: 20 });
+    expect(text).toMatch(/1 bot added from profits, 63 queued/);
+    expect(text).toMatch(/\$20\.00 more profit/);
   });
 });

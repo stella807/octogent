@@ -200,7 +200,7 @@ node --experimental-strip-types src/cli.ts compare \
 | `paper` | Live market data, simulated fills, no real money. One symbol or many on one account |
 | `status` | The paper account: equity, profit/loss, every open position, closed trades by symbol. `--live` reads the real exchange account instead |
 | `swarm` | A crowd of rule-based traders forecasts P(up); `--evaluate` scores every past forecast |
-| `fleet-init` / `fleet` / `fleet-status` | Plan and run 76 paper bots at once (12 daily strategy bots, trend-hold on the 32 most-traded coins, 32 one-minute bots), each on its own $25 account with coin-flip controls, and report them grouped |
+| `fleet-init` / `fleet` / `fleet-status` | Run a paper fleet (10 bots by default, 76 with `--size full`), each on its own $25 account with coin-flip controls; queued bots are added only as banked profits pay for them |
 | `binary` | Fixed-payout up/down bets on past prices: the swarm, a strategy, always-up and a coin flip against the breakeven hit rate |
 | `dashboard` | Writes `dashboard/market-eye.html`: every coin's forecast, the swarm's track record on it, its screen verdict and any paper position, in one page that opens from disk |
 | `live` | Real orders. Two independent gates stand in front of it. |
@@ -772,6 +772,24 @@ donchian-breakout and ema-zone-reversal on BTC daily; buy-and-hold and
 coin-flip on BTC daily; and donchian-breakout, ema-crossover, tsmom and
 coin-flip on BTC 1-minute. Names match the full plan, so switching sizes
 keeps each kept bot's account.
+
+**The fleet grows from its own profits.** `fleet-init` also writes the rest
+of the 76-bot plan as a queue: daily strategies first, then trend-hold
+across the most-traded coins, then the fast bots, whose record is weakest.
+Once an hour `fleet` checks whether profits can pay for the next $25 bot, and
+funds it only when both of these hold:
+
+1. **The whole fleet is up by enough.** Marked to market, it must be up by
+   $25 for every bot already added plus this one. One winner cannot pay for a
+   new bot while the rest of the fleet has lost more than it made.
+2. **The $25 is banked profit.** It is taken from realized profit sitting in
+   cash, never from open-position gains that can still vanish, and no donor
+   is drawn below its own starting cash. The original stake is never spent
+   on expansion.
+
+The cash really moves: it is withdrawn from the donors' accounts. A donor's
+profit still credits what it gave (`status` shows it as "paid out to fund
+new bots"), and every funding is recorded in `fleet.json` under `added`.
 
 **Money each bot needs.** The binding limit is the $1 minimum order.
 Measured from each strategy's smallest entry over BTC history:

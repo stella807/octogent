@@ -14,7 +14,7 @@ import { evaluateSwarm } from './swarm/score.ts';
 import { coinFlip, formatBinary, runBinary, type BinaryOptions, type Call } from './backtest/binary.ts';
 import { formatScorecard, formatSwarmForecast } from './swarm/format.ts';
 import { assembleDashboard, renderDashboardPage, snapshotCoin, type CoinSnapshot } from './dashboard/build.ts';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { barsForRange, clipToRange, parseRange, type DateRange } from './data/range.ts';
 import { generateCandles } from './data/synthetic.ts';
@@ -31,7 +31,21 @@ import { formatScreen, readScreenFile, screenPath, writeScreenFile } from './scr
 import { connectReadOnly, ExchangeBroker, LIVE_CONFIRM_ENV, LIVE_CONFIRM_VALUE, readAccount, type AccountSnapshot } from './live/exchange-broker.ts';
 import { LiveRunner } from './live/runner.ts';
 import { TelegramNotifier } from './live/notifier.ts';
-import { botStatePath, formatFleetStatus, parseFleet, planCoreFleet, planFleet, rankByDollarVolume, type FleetFile } from './live/fleet.ts';
+import {
+  botStatePath,
+  EXPANSION_COST,
+  expansionProgress,
+  formatFleetStatus,
+  parseFleet,
+  planCoreFleet,
+  planExpansion,
+  planFleet,
+  planReserve,
+  rankByDollarVolume,
+  type BotFunds,
+  type BotSpec,
+  type FleetFile,
+} from './live/fleet.ts';
 import { alignCandles, alignmentCoverage } from './portfolio/align.ts';
 import { alignSentiment, fetchSentiment } from './data/sentiment.ts';
 import type { StrategyContext } from './strategy/types.ts';
@@ -51,8 +65,8 @@ quant-bot — crypto strategy research and paper trading
   walkforward  Pick parameters out-of-sample and report what survived
   montecarlo   Resample trade order to show the real spread of outcomes
   paper        Trade live market data with simulated fills (no real money)
-  fleet-init   Plan a paper fleet of 10 bots; --size full plans 76 (trend-hold on the 32 most-traded coins, 32 fast bots)
-  fleet        Run every bot in the fleet file at once, each on its own paper account
+  fleet-init   Plan a paper fleet of 10 bots, with the rest of the 76-bot plan queued; --size full starts all 76
+  fleet        Run every bot in the fleet file at once; adds queued bots as realized profits pay for them
   fleet-status Every fleet bot's profit, grouped, next to its coin-flip control
   status       Paper account profit/loss and every open position; --live reads your real exchange account
   screen       Walk-forward test a strategy on every --quote market of an exchange; keep what passes
@@ -586,40 +600,36 @@ export async function main(argv: readonly string[]): Promise<number> {
         throw new Error(`${path} already exists. Delete it to re-plan; each bot's account lives in its own folder and is kept.`);
       }
       const exchange = values.exchange as string;
-      if (values.size !== 'full') {
-        if (values.size !== 'core') throw new Error(`--size must be core or full, got "${String(values.size)}"`);
-        const fleet: FleetFile = { exchange, createdAt: new Date().toISOString(), bots: planCoreFleet() };
-        await mkdir(dirname(path), { recursive: true });
-        await writeFile(path, JSON.stringify(fleet, null, 2), 'utf8');
-        process.stdout.write(`Wrote ${path}: ${fleet.bots.length} bots: ${fleet.bots.map((b) => b.name).join(', ')}\n`);
-        return 0;
+      if (values.size !== 'full' && values.size !== 'core') {
+        throw new Error(`--size must be core or full, got "${String(values.size)}"`);
       }
-      const markets = await listMarkets(exchange, values.quote as string);
-      let done = 0;
-      const histories = await mapPool(markets, Math.trunc(num(values.concurrency, 'concurrency')), async (symbol) => {
-        let candles: Candle[] = [];
-        try {
-          candles = await fetchCandles({ exchange, symbol, timeframe: '1d', bars: 260, cacheDir: 'data/cache' });
-        } catch {
-          // A market that will not load is simply not a candidate.
-        }
-        done += 1;
-        if (done % 50 === 0) process.stderr.write(`  ranked ${done}/${markets.length} markets\n`);
-        return [symbol, candles] as const;
-      });
-      const top = rankByDollarVolume(Object.fromEntries(histories), { minBars: 201, top: 32, window: 30 });
-      const fleet: FleetFile = { exchange, createdAt: new Date().toISOString(), bots: planFleet(top) };
-      await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, JSON.stringify(fleet, null, 2), 'utf8');
-      process.stdout.write(`Wrote ${path}: ${fleet.bots.length} bots. Most-traded coins: ${top.join(', ')}\n`);
+      const top = await rankTopCoins(exchange, values.quote as string, Math.trunc(num(values.concurrency, 'concurrency')));
+      const full = planFleet(top);
+      const bots = values.size === 'full' ? full : planCoreFleet();
+      const fleet: FleetFile = {
+        exchange,
+        createdAt: new Date().toISOString(),
+        bots,
+        reserve: planReserve(full, bots),
+        added: [],
+      };
+      await writeFleet(path, fleet);
+      process.stdout.write(
+        `Wrote ${path}: ${bots.length} bots running, ${fleet.reserve?.length ?? 0} more queued to add ` +
+        `as profits pay for them. Most-traded coins: ${top.join(', ')}\n`,
+      );
       return 0;
     }
 
     case 'fleet': {
       const fleetPath = values.fleet as string;
-      const fleet = parseFleet(await readFile(fleetPath, 'utf8'));
       const fleetDir = dirname(fleetPath);
-      const runners = fleet.bots.map((spec) => {
+      const initial = parseFleet(await readFile(fleetPath, 'utf8'));
+      const exchange = initial.exchange;
+      const controller = new AbortController();
+      const brokers = new Map<string, PaperBroker>();
+      const runs: Promise<void>[] = [];
+      const start = (spec: BotSpec): void => {
         const factory = getStrategy(spec.strategy);
         const statePath = botStatePath(fleetDir, spec.name);
         const broker = new PaperBroker({
@@ -627,11 +637,12 @@ export async function main(argv: readonly string[]): Promise<number> {
           costs: { ...config.costs, feeBps: spec.feeBps },
           accountPath: paperAccountPath(statePath),
           feed: (sym, tf, count) => fetchCandles({
-            exchange: fleet.exchange, symbol: sym, timeframe: tf, bars: count, cacheDir: 'data/cache', noCache: true,
+            exchange, symbol: sym, timeframe: tf, bars: count, cacheDir: 'data/cache', noCache: true,
           }),
         });
-        // No notifier: one message per fill across 76 bots would bury anything that mattered.
-        return new LiveRunner({
+        brokers.set(spec.name, broker);
+        // No notifier: one message per fill across dozens of bots would bury anything that mattered.
+        const runner = new LiveRunner({
           broker,
           factory,
           params: { ...factory.defaults, ...spec.params },
@@ -641,16 +652,62 @@ export async function main(argv: readonly string[]): Promise<number> {
           statePath,
           log: (message) => process.stdout.write(`[${spec.name}] ${message}\n`),
         }, spec.equity);
-      });
-      const controller = new AbortController();
+        runs.push(runner.run(controller.signal));
+      };
+      for (const spec of initial.bots) start(spec);
+
+      // Grows the fleet one bot at a time while profits can pay for it. Runs
+      // in this process because the donors' cash lives in these brokers: an
+      // edit to their files from outside would be overwritten on the next fill.
+      const expand = async (): Promise<void> => {
+        for (;;) {
+          const fleet = parseFleet(await readFile(fleetPath, 'utf8'));
+          const next = fleet.reserve?.[0];
+          if (!next) return;
+          const funds = await fleetFunds(fleet, fleetDir, priceCache(exchange));
+          const added = new Set((fleet.added ?? []).map((a) => a.name));
+          const principal = funds.filter((f) => !added.has(f.name)).reduce((sum, f) => sum + f.startingCash, 0);
+          const plan = planExpansion(funds, { principal, added: added.size, cost: EXPANSION_COST });
+          if (!plan) return;
+          const fundedBy: Record<string, number> = {};
+          for (const [name, amount] of Object.entries(plan)) {
+            const donor = brokers.get(name);
+            if (donor) fundedBy[name] = await donor.withdraw(amount);
+          }
+          const spec: BotSpec = { ...next, equity: EXPANSION_COST };
+          await writeFleet(fleetPath, {
+            ...fleet,
+            bots: [...fleet.bots, spec],
+            reserve: (fleet.reserve ?? []).slice(1),
+            added: [...(fleet.added ?? []), { name: spec.name, at: new Date().toISOString(), fundedBy }],
+          });
+          process.stdout.write(
+            `[fleet] added ${spec.name}, paid for by ${Object.entries(fundedBy).map(([n, a]) => `${n} $${a.toFixed(2)}`).join(', ')}\n`,
+          );
+          start(spec);
+        }
+      };
+      const tick = (): void => {
+        expand().catch((error: unknown) => {
+          process.stdout.write(`[fleet] expansion check failed: ${error instanceof Error ? error.message : String(error)}\n`);
+        });
+      };
+      const timer = setInterval(tick, EXPANSION_CHECK_MS);
+      setTimeout(tick, 60_000);
+
       process.on('SIGINT', () => {
         process.stdout.write('\nstopping every bot after its current poll; open positions are left as-is\n');
+        clearInterval(timer);
         controller.abort();
       });
-      process.stdout.write(`fleet: ${runners.length} paper bots on ${fleet.exchange} (no real money)\n`);
-      // One process, one shared rate-limited exchange connection: 76 separate
-      // processes would each open their own and trip the exchange's limits.
-      await Promise.all(runners.map((r) => r.run(controller.signal)));
+      process.stdout.write(
+        `fleet: ${initial.bots.length} paper bots on ${exchange} (no real money), ` +
+        `${initial.reserve?.length ?? 0} queued to add as profits pay for them\n`,
+      );
+      // One process, one shared rate-limited exchange connection: dozens of
+      // separate processes would each open their own and trip the exchange's limits.
+      await new Promise<void>((resolve) => controller.signal.addEventListener('abort', () => resolve()));
+      await Promise.all(runs);
       return 0;
     }
 
@@ -662,8 +719,16 @@ export async function main(argv: readonly string[]): Promise<number> {
         spec,
         status: await loadPaperStatus(botStatePath(dirname(fleetPath), spec.name), fleet.exchange, prices),
       }));
-      if (values.json) emit(rows);
-      else process.stdout.write(`${formatFleetStatus(rows)}\n`);
+      const added = new Set((fleet.added ?? []).map((a) => a.name));
+      const principal = rows.filter((r) => !added.has(r.spec.name)).reduce((sum, r) => sum + (r.status?.startingCash ?? r.spec.equity), 0);
+      const fleetEquity = rows.reduce((sum, r) => sum + (r.status?.equity ?? r.spec.equity), 0);
+      const expansion = {
+        added: added.size,
+        queued: fleet.reserve?.length ?? 0,
+        ...expansionProgress({ principal, fleetEquity, added: added.size, cost: EXPANSION_COST }),
+      };
+      if (values.json) emit({ rows, expansion });
+      else process.stdout.write(`${formatFleetStatus(rows, expansion)}\n`);
       return 0;
     }
 
@@ -908,6 +973,56 @@ function priceCache(exchange: string): (symbol: string) => Promise<number | null
     }
     return price;
   };
+}
+
+/** How often the fleet checks whether profits can pay for another bot. */
+const EXPANSION_CHECK_MS = 60 * 60 * 1000;
+
+async function rankTopCoins(exchange: string, quote: string, concurrency: number): Promise<string[]> {
+  const markets = await listMarkets(exchange, quote);
+  let done = 0;
+  const histories = await mapPool(markets, concurrency, async (symbol) => {
+    let candles: Candle[] = [];
+    try {
+      candles = await fetchCandles({ exchange, symbol, timeframe: '1d', bars: 260, cacheDir: 'data/cache' });
+    } catch {
+      // A market that will not load is simply not a candidate.
+    }
+    done += 1;
+    if (done % 50 === 0) process.stderr.write(`  ranked ${done}/${markets.length} markets\n`);
+    return [symbol, candles] as const;
+  });
+  return rankByDollarVolume(Object.fromEntries(histories), { minBars: 201, top: 32, window: 30 });
+}
+
+async function writeFleet(path: string, fleet: FleetFile): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, JSON.stringify(fleet, null, 2), 'utf8');
+  await rename(tmp, path);
+}
+
+/** Every running bot's money, from its saved account, for the expansion check. */
+async function fleetFunds(
+  fleet: FleetFile,
+  fleetDir: string,
+  priceOf: (symbol: string) => Promise<number | null>,
+): Promise<BotFunds[]> {
+  const out: BotFunds[] = [];
+  for (const spec of fleet.bots) {
+    const statePath = botStatePath(fleetDir, spec.name);
+    const status = await loadPaperStatus(statePath, fleet.exchange, priceOf);
+    if (!status) continue;
+    out.push({
+      name: spec.name,
+      startingCash: status.startingCash,
+      cash: status.cash,
+      equity: status.equity,
+      realized: Object.values(status.realizedBySymbol).reduce((sum, v) => sum + v, 0),
+      withdrawn: status.withdrawn,
+    });
+  }
+  return out;
 }
 
 async function exists(path: string): Promise<boolean> {

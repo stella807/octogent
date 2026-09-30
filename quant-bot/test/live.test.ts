@@ -164,7 +164,7 @@ describe('paper status', () => {
   const fill = (symbol: string, side: 'buy' | 'sell', qty: number, price: number): Fill =>
     ({ symbol, side, qty, price, fee: 0, time: 0 });
   const account = (cash: number, holdings: Record<string, number>, fills: Fill[] = []) =>
-    ({ startingCash: 25, cash, holdings, fills });
+    ({ startingCash: 25, cash, holdings, fills, withdrawn: 0 });
   const stateWith = (entries: Record<string, { entryPrice: number; stopPrice?: number }>) => ({
     ...EMPTY_STATE,
     symbols: Object.fromEntries(Object.entries(entries).map(([sym, e]) =>
