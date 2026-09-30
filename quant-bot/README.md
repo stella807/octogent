@@ -748,7 +748,7 @@ it is most heavily loaded exactly when price is falling hardest.
 ## The paper fleet: 76 bots, each with a luck control
 
 ```bash
-pnpm cli fleet-init --exchange coinbase   # ranks every USD market by dollar volume, writes .quant-bot/fleet/fleet.json
+pnpm cli fleet-init --exchange coinbase   # 10 bots (below); --size full plans all 76, ranking every USD market by dollar volume
 pnpm cli fleet                            # runs every bot in one process, one shared rate-limited connection
 pnpm cli fleet-status                     # grouped profit table
 ```
@@ -766,6 +766,20 @@ switch it was tested with (60% for trend-hold, none for the two yardsticks,
 15% otherwise). `coin-flip` is long or flat at random each bar, drawn from a
 hash of the bar's timestamp. With 76 bots some will be up by chance, and a bot
 has shown nothing until it beats its group's coin flip for weeks.
+
+The default `core` plan is ten of those bots: trend-hold on BTC and ETH;
+donchian-breakout and ema-zone-reversal on BTC daily; buy-and-hold and
+coin-flip on BTC daily; and donchian-breakout, ema-crossover, tsmom and
+coin-flip on BTC 1-minute. Names match the full plan, so switching sizes
+keeps each kept bot's account.
+
+**Money each bot needs.** The binding limit is the $1 minimum order.
+Measured from each strategy's smallest entry over BTC history:
+full-position bots (trend-hold, buy-and-hold, coin-flip, every 1-minute bot)
+trade from about $2. donchian-breakout needs about $19, because its
+smallest entry was 5.5% of the account. ema-zone-reversal needs about $33
+(3.1%). Ten bots at $25 is $250, or about $260 with ema-zone-reversal on
+$35. At these sizes fees, not the minimum, are the real cost.
 
 One finding from the first minute: `dca-safety` cannot trade $25 at all.
 Its base order is $0.89, under Coinbase's $1 minimum.

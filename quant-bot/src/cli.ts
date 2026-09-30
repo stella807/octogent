@@ -31,7 +31,7 @@ import { formatScreen, readScreenFile, screenPath, writeScreenFile } from './scr
 import { connectReadOnly, ExchangeBroker, LIVE_CONFIRM_ENV, LIVE_CONFIRM_VALUE, readAccount, type AccountSnapshot } from './live/exchange-broker.ts';
 import { LiveRunner } from './live/runner.ts';
 import { TelegramNotifier } from './live/notifier.ts';
-import { botStatePath, formatFleetStatus, parseFleet, planFleet, rankByDollarVolume, type FleetFile } from './live/fleet.ts';
+import { botStatePath, formatFleetStatus, parseFleet, planCoreFleet, planFleet, rankByDollarVolume, type FleetFile } from './live/fleet.ts';
 import { alignCandles, alignmentCoverage } from './portfolio/align.ts';
 import { alignSentiment, fetchSentiment } from './data/sentiment.ts';
 import type { StrategyContext } from './strategy/types.ts';
@@ -51,7 +51,7 @@ quant-bot — crypto strategy research and paper trading
   walkforward  Pick parameters out-of-sample and report what survived
   montecarlo   Resample trade order to show the real spread of outcomes
   paper        Trade live market data with simulated fills (no real money)
-  fleet-init   Plan a paper fleet: 12 daily strategy bots, trend-hold on the 32 most-traded coins, 32 fast bots
+  fleet-init   Plan a paper fleet of 10 bots; --size full plans 76 (trend-hold on the 32 most-traded coins, 32 fast bots)
   fleet        Run every bot in the fleet file at once, each on its own paper account
   fleet-status Every fleet bot's profit, grouped, next to its coin-flip control
   status       Paper account profit/loss and every open position; --live reads your real exchange account
@@ -157,6 +157,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       state: { type: 'string' },
       json: { type: 'boolean', default: false },
       fleet: { type: 'string', default: '.quant-bot/fleet/fleet.json' },
+      size: { type: 'string', default: 'core' },
     },
   });
 
@@ -585,6 +586,14 @@ export async function main(argv: readonly string[]): Promise<number> {
         throw new Error(`${path} already exists. Delete it to re-plan; each bot's account lives in its own folder and is kept.`);
       }
       const exchange = values.exchange as string;
+      if (values.size !== 'full') {
+        if (values.size !== 'core') throw new Error(`--size must be core or full, got "${String(values.size)}"`);
+        const fleet: FleetFile = { exchange, createdAt: new Date().toISOString(), bots: planCoreFleet() };
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, JSON.stringify(fleet, null, 2), 'utf8');
+        process.stdout.write(`Wrote ${path}: ${fleet.bots.length} bots: ${fleet.bots.map((b) => b.name).join(', ')}\n`);
+        return 0;
+      }
       const markets = await listMarkets(exchange, values.quote as string);
       let done = 0;
       const histories = await mapPool(markets, Math.trunc(num(values.concurrency, 'concurrency')), async (symbol) => {

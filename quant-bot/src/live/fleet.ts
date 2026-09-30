@@ -50,8 +50,8 @@ function maxDrawdownFor(strategy: string): number {
   return 15;
 }
 
-export function planFleet(topCoins: readonly string[]): BotSpec[] {
-  const bot = (group: string, prefix: string, strategy: string, symbol: string, timeframe: Timeframe): BotSpec => ({
+function bot(group: string, prefix: string, strategy: string, symbol: string, timeframe: Timeframe): BotSpec {
+  return {
     name: `${prefix}-${strategy}-${slug(symbol)}`,
     group,
     strategy,
@@ -60,11 +60,37 @@ export function planFleet(topCoins: readonly string[]): BotSpec[] {
     equity: EQUITY,
     feeBps: FEE_BPS,
     maxDrawdownPct: maxDrawdownFor(strategy),
-  });
+  };
+}
+
+export function planFleet(topCoins: readonly string[]): BotSpec[] {
   return [
     ...DAILY_STRATEGIES.flatMap((s) => DAILY_SYMBOLS.map((sym) => bot('daily strategies', 'daily', s, sym, '1d'))),
     ...topCoins.map((sym) => bot('trend-hold x32', 'top', 'trend-hold', sym, '1d')),
     ...FAST_STRATEGIES.flatMap((s) => FAST_SYMBOLS.map((sym) => bot('fast (1-minute)', 'fast', s, sym, '1m'))),
+  ];
+}
+
+/**
+ * Ten bots: the strategies with the best evidence, one benchmark and one
+ * coin-flip control per speed, so each group can still be judged against luck.
+ * Names match the full fleet's, so a bot kept from it keeps its account.
+ * dca-safety is left out: its $0.89 base order is under the $1 minimum at $25.
+ */
+export function planCoreFleet(): BotSpec[] {
+  const daily = 'daily strategies';
+  const fast = 'fast (1-minute)';
+  return [
+    bot(daily, 'daily', 'trend-hold', 'BTC/USD', '1d'),
+    bot(daily, 'daily', 'trend-hold', 'ETH/USD', '1d'),
+    bot(daily, 'daily', 'donchian-breakout', 'BTC/USD', '1d'),
+    bot(daily, 'daily', 'ema-zone-reversal', 'BTC/USD', '1d'),
+    bot(daily, 'daily', 'buy-and-hold', 'BTC/USD', '1d'),
+    bot(daily, 'daily', 'coin-flip', 'BTC/USD', '1d'),
+    bot(fast, 'fast', 'donchian-breakout', 'BTC/USD', '1m'),
+    bot(fast, 'fast', 'ema-crossover', 'BTC/USD', '1m'),
+    bot(fast, 'fast', 'tsmom', 'BTC/USD', '1m'),
+    bot(fast, 'fast', 'coin-flip', 'BTC/USD', '1m'),
   ];
 }
 

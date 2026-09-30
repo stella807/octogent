@@ -6,6 +6,7 @@ import {
   FAST_SYMBOLS,
   formatFleetStatus,
   parseFleet,
+  planCoreFleet,
   planFleet,
   rankByDollarVolume,
   type BotSpec,
@@ -75,6 +76,22 @@ describe('planFleet', () => {
   it('round-trips through the fleet file', () => {
     const parsed = parseFleet(JSON.stringify({ exchange: 'coinbase', createdAt: 'x', bots }));
     expect(parsed.bots).toHaveLength(76);
+  });
+});
+
+describe('planCoreFleet', () => {
+  const bots = planCoreFleet();
+  const full = new Set(planFleet(Array.from({ length: 32 }, (_, i) => `C${i}/USD`)).map((b) => b.name));
+
+  it('is ten bots with a coin-flip control and a benchmark', () => {
+    expect(bots).toHaveLength(10);
+    expect(bots.filter((b) => b.strategy === 'coin-flip')).toHaveLength(2);
+    expect(bots.some((b) => b.strategy === 'buy-and-hold')).toBe(true);
+    expect(bots.some((b) => b.strategy === 'dca-safety')).toBe(false);
+  });
+
+  it('reuses the full fleet\'s names, so kept bots keep their accounts', () => {
+    for (const b of bots) expect(full.has(b.name)).toBe(true);
   });
 });
 
