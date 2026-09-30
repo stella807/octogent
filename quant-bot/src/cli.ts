@@ -33,10 +33,10 @@ import { LiveRunner } from './live/runner.ts';
 import { TelegramNotifier } from './live/notifier.ts';
 import {
   botStatePath,
-  EXPANSION_COST,
   expansionProgress,
   formatFleetStatus,
   parseFleet,
+  minEquityFor,
   planCoreFleet,
   planExpansion,
   planFleet,
@@ -65,7 +65,7 @@ quant-bot — crypto strategy research and paper trading
   walkforward  Pick parameters out-of-sample and report what survived
   montecarlo   Resample trade order to show the real spread of outcomes
   paper        Trade live market data with simulated fills (no real money)
-  fleet-init   Plan a paper fleet of 10 bots, with the rest of the 76-bot plan queued; --size full starts all 76
+  fleet-init   Plan a paper fleet of 10 bots sharing --budget (default $250), the rest of the 76-bot plan queued; --size full starts all 76
   fleet        Run every bot in the fleet file at once; adds queued bots as realized profits pay for them
   fleet-status Every fleet bot's profit, grouped, next to its coin-flip control
   status       Paper account profit/loss and every open position; --live reads your real exchange account
@@ -172,6 +172,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       json: { type: 'boolean', default: false },
       fleet: { type: 'string', default: '.quant-bot/fleet/fleet.json' },
       size: { type: 'string', default: 'core' },
+      budget: { type: 'string', default: '250' },
     },
   });
 
@@ -603,9 +604,14 @@ export async function main(argv: readonly string[]): Promise<number> {
       if (values.size !== 'full' && values.size !== 'core') {
         throw new Error(`--size must be core or full, got "${String(values.size)}"`);
       }
+      // The budget is split evenly across the ten starting bots; bots added later cost the same.
+      const perBot = Number((num(values.budget, 'budget') / 10).toFixed(2));
+      if (perBot < minEquityFor({ strategy: 'buy-and-hold', timeframe: '1d' })) {
+        throw new Error(`a $${String(values.budget)} budget gives each of 10 bots $${perBot}, under the exchange's $1 minimum order`);
+      }
       const top = await rankTopCoins(exchange, values.quote as string, Math.trunc(num(values.concurrency, 'concurrency')));
-      const full = planFleet(top);
-      const bots = values.size === 'full' ? full : planCoreFleet();
+      const full = planFleet(top, perBot);
+      const bots = values.size === 'full' ? full.filter((b) => minEquityFor(b) <= b.equity) : planCoreFleet(perBot);
       const fleet: FleetFile = {
         exchange,
         createdAt: new Date().toISOString(),
@@ -667,14 +673,14 @@ export async function main(argv: readonly string[]): Promise<number> {
           const funds = await fleetFunds(fleet, fleetDir, priceCache(exchange));
           const added = new Set((fleet.added ?? []).map((a) => a.name));
           const principal = funds.filter((f) => !added.has(f.name)).reduce((sum, f) => sum + f.startingCash, 0);
-          const plan = planExpansion(funds, { principal, added: added.size, cost: EXPANSION_COST });
+          const plan = planExpansion(funds, { principal, added: added.size, cost: next.equity });
           if (!plan) return;
           const fundedBy: Record<string, number> = {};
           for (const [name, amount] of Object.entries(plan)) {
             const donor = brokers.get(name);
             if (donor) fundedBy[name] = await donor.withdraw(amount);
           }
-          const spec: BotSpec = { ...next, equity: EXPANSION_COST };
+          const spec: BotSpec = next;
           await writeFleet(fleetPath, {
             ...fleet,
             bots: [...fleet.bots, spec],
@@ -725,7 +731,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       const expansion = {
         added: added.size,
         queued: fleet.reserve?.length ?? 0,
-        ...expansionProgress({ principal, fleetEquity, added: added.size, cost: EXPANSION_COST }),
+        ...expansionProgress({ principal, fleetEquity, added: added.size, cost: fleet.reserve?.[0]?.equity ?? fleet.bots[0]?.equity ?? 0 }),
       };
       if (values.json) emit({ rows, expansion });
       else process.stdout.write(`${formatFleetStatus(rows, expansion)}\n`);

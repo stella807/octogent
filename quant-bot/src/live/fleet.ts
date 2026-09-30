@@ -34,8 +34,31 @@ export interface FleetFile {
   readonly added?: readonly FundedBot[];
 }
 
-/** What one new bot costs: the $25 account every bot starts with. */
-export const EXPANSION_COST = 25;
+/** Each bot's account when no budget is given: ten bots, $250 in all. */
+export const DEFAULT_BOT_EQUITY = 25;
+
+/**
+ * Smallest account at which a strategy's smallest-ever entry still clears
+ * the exchange's $1 minimum order, measured from its trades over ~8 years of
+ * Coinbase BTC. Stop-sized strategies commit only a slice of the account per
+ * trade (daily donchian's smallest was 5.5%, ema-zone-reversal's 3.1%), so a
+ * small account makes every order too small to place. Anything not listed
+ * commits the whole account per trade and needs only the minimum plus fees.
+ */
+export const MIN_EQUITY: Readonly<Record<string, number>> = {
+  'donchian-breakout@1d': 19,
+  'ema-zone-reversal@1d': 33,
+  'dca-safety@1d': 29,
+};
+const FULL_POSITION_MIN = 1.01;
+
+export function minEquityFor(spec: Pick<BotSpec, 'strategy' | 'timeframe'>): number {
+  return MIN_EQUITY[`${spec.strategy}@${spec.timeframe}`] ?? FULL_POSITION_MIN;
+}
+
+function canTrade(spec: BotSpec): boolean {
+  return minEquityFor(spec) <= spec.equity;
+}
 
 export const DAILY_SYMBOLS = ['BTC/USD', 'ETH/USD'] as const;
 export const FAST_SYMBOLS = ['BTC/USD', 'ETH/USD', 'SOL/USD', 'XRP/USD'] as const;
@@ -48,7 +71,6 @@ const FAST_STRATEGIES = [
   'rsi-mean-reversion', 'grid-range', 'master-consensus', 'coin-flip',
 ];
 
-const EQUITY = 25;
 /** Coinbase's lowest-tier fee, near enough; the default 0.1% flatters small accounts. */
 const FEE_BPS = 60;
 
@@ -63,24 +85,24 @@ function maxDrawdownFor(strategy: string): number {
   return 15;
 }
 
-function bot(group: string, prefix: string, strategy: string, symbol: string, timeframe: Timeframe): BotSpec {
+function bot(group: string, prefix: string, strategy: string, symbol: string, timeframe: Timeframe, equity: number): BotSpec {
   return {
     name: `${prefix}-${strategy}-${slug(symbol)}`,
     group,
     strategy,
     symbols: [symbol],
     timeframe,
-    equity: EQUITY,
+    equity,
     feeBps: FEE_BPS,
     maxDrawdownPct: maxDrawdownFor(strategy),
   };
 }
 
-export function planFleet(topCoins: readonly string[]): BotSpec[] {
+export function planFleet(topCoins: readonly string[], equity: number = DEFAULT_BOT_EQUITY): BotSpec[] {
   return [
-    ...DAILY_STRATEGIES.flatMap((s) => DAILY_SYMBOLS.map((sym) => bot('daily strategies', 'daily', s, sym, '1d'))),
-    ...topCoins.map((sym) => bot('trend-hold x32', 'top', 'trend-hold', sym, '1d')),
-    ...FAST_STRATEGIES.flatMap((s) => FAST_SYMBOLS.map((sym) => bot('fast (1-minute)', 'fast', s, sym, '1m'))),
+    ...DAILY_STRATEGIES.flatMap((s) => DAILY_SYMBOLS.map((sym) => bot('daily strategies', 'daily', s, sym, '1d', equity))),
+    ...topCoins.map((sym) => bot('trend-hold x32', 'top', 'trend-hold', sym, '1d', equity)),
+    ...FAST_STRATEGIES.flatMap((s) => FAST_SYMBOLS.map((sym) => bot('fast (1-minute)', 'fast', s, sym, '1m', equity))),
   ];
 }
 
@@ -88,35 +110,40 @@ export function planFleet(topCoins: readonly string[]): BotSpec[] {
  * Ten bots: the strategies with the best evidence, one benchmark and one
  * coin-flip control per speed, so each group can still be judged against luck.
  * Names match the full fleet's, so a bot kept from it keeps its account.
- * dca-safety is left out: its $0.89 base order is under the $1 minimum at $25.
+ * On a small budget, a bot whose smallest trade would fall under the $1
+ * minimum is swapped for the next candidate that can actually trade.
  */
-export function planCoreFleet(): BotSpec[] {
+export function planCoreFleet(equity: number = DEFAULT_BOT_EQUITY): BotSpec[] {
   const daily = 'daily strategies';
   const fast = 'fast (1-minute)';
-  return [
-    bot(daily, 'daily', 'trend-hold', 'BTC/USD', '1d'),
-    bot(daily, 'daily', 'trend-hold', 'ETH/USD', '1d'),
-    bot(daily, 'daily', 'donchian-breakout', 'BTC/USD', '1d'),
-    bot(daily, 'daily', 'ema-zone-reversal', 'BTC/USD', '1d'),
-    bot(daily, 'daily', 'buy-and-hold', 'BTC/USD', '1d'),
-    bot(daily, 'daily', 'coin-flip', 'BTC/USD', '1d'),
-    bot(fast, 'fast', 'donchian-breakout', 'BTC/USD', '1m'),
-    bot(fast, 'fast', 'ema-crossover', 'BTC/USD', '1m'),
-    bot(fast, 'fast', 'tsmom', 'BTC/USD', '1m'),
-    bot(fast, 'fast', 'coin-flip', 'BTC/USD', '1m'),
+  const candidates = [
+    bot(daily, 'daily', 'trend-hold', 'BTC/USD', '1d', equity),
+    bot(daily, 'daily', 'trend-hold', 'ETH/USD', '1d', equity),
+    bot(daily, 'daily', 'donchian-breakout', 'BTC/USD', '1d', equity),
+    bot(daily, 'daily', 'ema-zone-reversal', 'BTC/USD', '1d', equity),
+    bot(daily, 'daily', 'buy-and-hold', 'BTC/USD', '1d', equity),
+    bot(daily, 'daily', 'coin-flip', 'BTC/USD', '1d', equity),
+    bot(fast, 'fast', 'donchian-breakout', 'BTC/USD', '1m', equity),
+    bot(fast, 'fast', 'ema-crossover', 'BTC/USD', '1m', equity),
+    bot(fast, 'fast', 'tsmom', 'BTC/USD', '1m', equity),
+    bot(fast, 'fast', 'coin-flip', 'BTC/USD', '1m', equity),
+    // Stand-ins for bots too small to trade: the ETH benchmark for trend-hold ETH, then SOL.
+    bot(daily, 'daily', 'buy-and-hold', 'ETH/USD', '1d', equity),
+    bot('trend-hold x32', 'top', 'trend-hold', 'SOL/USD', '1d', equity),
   ];
+  return candidates.filter(canTrade).slice(0, 10);
 }
 
 /**
  * The queue of bots to add as profits allow: every bot in the full plan not
  * already running, in the full plan's order — daily strategies, then
  * trend-hold across the most-traded coins, then the fast bots, whose record
- * so far is the weakest. dca-safety is left out because its first order is
- * under the exchange minimum at $25.
+ * so far is the weakest. Bots whose trades would fall under the exchange
+ * minimum at their budget are left out (at $25, that is dca-safety).
  */
 export function planReserve(full: readonly BotSpec[], running: readonly BotSpec[]): BotSpec[] {
   const taken = new Set(running.map((b) => b.name));
-  return full.filter((b) => !taken.has(b.name) && b.strategy !== 'dca-safety');
+  return full.filter((b) => !taken.has(b.name) && canTrade(b));
 }
 
 /** One bot's money, read from its paper account. */

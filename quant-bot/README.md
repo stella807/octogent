@@ -200,7 +200,7 @@ node --experimental-strip-types src/cli.ts compare \
 | `paper` | Live market data, simulated fills, no real money. One symbol or many on one account |
 | `status` | The paper account: equity, profit/loss, every open position, closed trades by symbol. `--live` reads the real exchange account instead |
 | `swarm` | A crowd of rule-based traders forecasts P(up); `--evaluate` scores every past forecast |
-| `fleet-init` / `fleet` / `fleet-status` | Run a paper fleet (10 bots by default, 76 with `--size full`), each on its own $25 account with coin-flip controls; queued bots are added only as banked profits pay for them |
+| `fleet-init` / `fleet` / `fleet-status` | Run a paper fleet of 10 bots sharing `--budget` (default $250; 76 bots with `--size full`), each on its own account with coin-flip controls; queued bots are added only as banked profits pay for them |
 | `binary` | Fixed-payout up/down bets on past prices: the swarm, a strategy, always-up and a coin flip against the breakeven hit rate |
 | `dashboard` | Writes `dashboard/market-eye.html`: every coin's forecast, the swarm's track record on it, its screen verdict and any paper position, in one page that opens from disk |
 | `live` | Real orders. Two independent gates stand in front of it. |
@@ -812,6 +812,15 @@ funds it only when both of these hold:
 The cash really moves: it is withdrawn from the donors' accounts. A donor's
 profit still credits what it gave (`status` shows it as "paid out to fund
 new bots"), and every funding is recorded in `fleet.json` under `added`.
+
+**A shared budget.** `fleet-init --budget 25` splits $25 across the ten
+starting bots, $2.50 each, and every queued bot then costs $2.50 of banked
+profit. A bot whose smallest trade would fall under the $1 minimum at its
+share is swapped for the next candidate that can trade (`MIN_EQUITY` in
+`src/live/fleet.ts`). At $2.50, daily donchian-breakout and ema-zone-reversal
+give way to buy-and-hold ETH and trend-hold SOL, and 60 bots stay queued.
+One risk is specific to small accounts: a position that falls under $1 can
+no longer be sold, since the sell would be under the minimum too.
 
 **Money each bot needs.** The binding limit is the $1 minimum order.
 Measured from each strategy's smallest entry over BTC history:

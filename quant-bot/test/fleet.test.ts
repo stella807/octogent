@@ -6,8 +6,10 @@ import {
   FAST_SYMBOLS,
   formatFleetStatus,
   parseFleet,
+  minEquityFor,
   planCoreFleet,
   planFleet,
+  planReserve,
   rankByDollarVolume,
   type BotSpec,
 } from '../src/live/fleet.ts';
@@ -92,6 +94,33 @@ describe('planCoreFleet', () => {
 
   it('reuses the full fleet\'s names, so kept bots keep their accounts', () => {
     for (const b of bots) expect(full.has(b.name)).toBe(true);
+  });
+});
+
+describe('a $25 fleet budget', () => {
+  const bots = planCoreFleet(2.5);
+
+  it('splits $25 into ten $2.50 accounts', () => {
+    expect(bots).toHaveLength(10);
+    expect(bots.every((b) => b.equity === 2.5)).toBe(true);
+  });
+
+  it('only runs strategies whose smallest trade still clears the $1 minimum order', () => {
+    for (const b of bots) expect(minEquityFor(b)).toBeLessThanOrEqual(2.5);
+    expect(bots.some((b) => b.strategy === 'donchian-breakout' && b.timeframe === '1d')).toBe(false);
+    expect(bots.some((b) => b.strategy === 'ema-zone-reversal')).toBe(false);
+  });
+
+  it('keeps a coin-flip control and a benchmark at each speed', () => {
+    expect(bots.filter((b) => b.strategy === 'coin-flip')).toHaveLength(2);
+    expect(bots.some((b) => b.strategy === 'buy-and-hold')).toBe(true);
+  });
+
+  it('queues only bots that can trade at the same $2.50', () => {
+    const full = planFleet(Array.from({ length: 32 }, (_, i) => `C${i}/USD`), 2.5);
+    const reserve = planReserve(full, bots);
+    expect(reserve.every((b) => b.equity === 2.5 && minEquityFor(b) <= 2.5)).toBe(true);
+    expect(reserve.length).toBeGreaterThan(40);
   });
 });
 

@@ -7,7 +7,7 @@ import { FRICTIONLESS } from '../src/backtest/costs.ts';
 import { PaperBroker, readPaperAccount } from '../src/live/paper-broker.ts';
 import { paperStatus } from '../src/live/status.ts';
 import { EMPTY_STATE } from '../src/live/state-store.ts';
-import { expansionProgress, planCoreFleet, planExpansion, planFleet, planReserve, type BotFunds } from '../src/live/fleet.ts';
+import { expansionProgress, minEquityFor, planCoreFleet, planExpansion, planFleet, planReserve, type BotFunds } from '../src/live/fleet.ts';
 
 const DAY = 86_400_000;
 const flat = async (): Promise<Candle[]> => [{ time: 0, open: 100, high: 100, low: 100, close: 100, volume: 1 }];
@@ -118,11 +118,13 @@ describe('planReserve', () => {
   const full = planFleet(Array.from({ length: 32 }, (_, i) => `C${i}/USD`));
   const reserve = planReserve(full, planCoreFleet());
 
-  it('queues every bot not already running, minus ones that cannot trade $25', () => {
+  it('queues every bot not already running, minus ones whose trades would fall under the $1 minimum', () => {
     const core = new Set(planCoreFleet().map((b) => b.name));
     expect(reserve.some((b) => core.has(b.name))).toBe(false);
     expect(reserve.some((b) => b.strategy === 'dca-safety')).toBe(false);
-    expect(reserve.length).toBe(full.length - core.size - 2);
+    const tooSmall = full.filter((b) => !core.has(b.name) && minEquityFor(b) > b.equity).length;
+    expect(tooSmall).toBeGreaterThanOrEqual(2);
+    expect(reserve.length).toBe(full.length - core.size - tooSmall);
   });
 
   it('adds the best-evidenced bots first and the fast ones last', () => {
