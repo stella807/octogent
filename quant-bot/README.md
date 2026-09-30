@@ -1043,6 +1043,35 @@ Ensembles of trend signals did not help here: `trend-vote` (30/38, +10%
 median) remains the best of everything tried on these coins. They run as
 validators on BTC and ETH.
 
+**Holdout on 242 coins never used to choose anything (2026-09-30).** Every
+strategy above was picked and judged on the same 38 coins, which are the most
+traded ones on Coinbase. To check that the results were not just fitted to
+them, the leading candidates were run once on the other 242 Coinbase USD
+markets with 400+ daily bars. The pass bar was fixed beforehand: beat shuffled
+prices at p < 1.7%, positive median out-of-sample return, profitable on more
+than half the coins.
+
+| Strategy | Beats shuffled | Profitable | Median return | Median worst drop | Fleet vote | Bar |
+|---|---|---|---|---|---|---|
+| trend-vote | 132/242 (luck: 8.9%) | 74/242 | -17% | 41% | 1/242 | not met |
+| bollinger-trend | 112/242 (luck: 89%) | 72/242 | -20% | 45% | 0/242 | not met |
+| channel-hold | 119/242 (luck: 63%) | 65/242 | -17% | 43% | 0/242 | not met |
+| trend-hold (reference) | 99/242 (luck: 99.8%) | 21/242 | -60% | 64% | 10/242 | not met |
+
+**None of the results on the 38 coins held on unseen coins.** trend-hold's
+"worthy" verdict (7 of 38) becomes 10 of 242, about what luck gives, and it
+was profitable on 9% of them. trend-vote's edge (30 of 38 beat shuffled,
++10% median) shrinks to 132 of 242 (55%) and a -17% median.
+
+Caveats that cut both ways: the unseen coins are smaller and many are thin or
+collapsed, where fills are worse than the backtest assumes, and the 38 are
+survivors by construction (chosen for current trading volume). So this does
+not show the strategies fail on large liquid coins. It does show the earlier
+"worthy" verdicts describe those 38 coins and not crypto in general, and that
+the selection of strategies on them was partly fitting. Expect live results on
+the coins the fleet actually trades to be closer to these than to the 38-coin
+numbers.
+
 **TradingView data.** TradingView has no public data API, and the
 unofficial scrapers break its terms, so the fleet does not pull from it. Its
 `COINBASE:` charts show Coinbase's own feed, which is what the bots already
