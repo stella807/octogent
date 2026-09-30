@@ -198,7 +198,7 @@ node --experimental-strip-types src/cli.ts compare \
 | `search` | Thousands of parameter combinations, train vs. held-out test |
 | `screen` | Walk-forward tests a strategy on every market an exchange lists, and keeps only what passes |
 | `paper` | Live market data, simulated fills, no real money. One symbol or many on one account |
-| `status` | The paper account: equity, profit/loss, every open position, closed trades by symbol |
+| `status` | The paper account: equity, profit/loss, every open position, closed trades by symbol. `--live` reads the real exchange account instead |
 | `swarm` | A crowd of rule-based traders forecasts P(up); `--evaluate` scores every past forecast |
 | `dashboard` | Writes `dashboard/market-eye.html`: every coin's forecast, the swarm's track record on it, its screen verdict and any paper position, in one page that opens from disk |
 | `live` | Real orders. Two independent gates stand in front of it. |
@@ -400,6 +400,35 @@ Two gates, on purpose: the most common way an automated system loses money is a
 test run pointed at the wrong endpoint, and a single flag is one typo away from
 that. Credentials are read from the environment, never from argv, where they
 would land in shell history and `ps` output.
+
+On Windows PowerShell the same thing is `$env:QUANT_BOT_LIVE_CONFIRM = "yes-i-accept-the-risk"`
+and so on. For Coinbase, create a CDP API key (ECDSA) and load it from the JSON
+file Coinbase downloads, so the secret never appears on screen or in history:
+
+```powershell
+$k = Get-Content "$HOME\Downloads\cdp_api_key.json" -Raw | ConvertFrom-Json
+$env:QUANT_BOT_API_KEY = $k.name
+$env:QUANT_BOT_API_SECRET = $k.privateKey
+```
+
+Live runs keep their own state in `.quant-bot/live-state.json`, so a paper
+position or paper kill switch can never leak into real trading. Risk limits
+are measured from the real balance at start, not `--equity`, and the first
+start records the account's value in `live-baseline.json` as the point profit
+is measured from. It is never overwritten, so a restart cannot reset a loss to
+zero; delete it only to deliberately start counting again.
+
+To see the real account at any time, read-only:
+
+```bash
+pnpm cli status --live --exchange coinbase
+```
+
+That needs the API key but not the live confirmation, because it cannot place
+orders; a key with only "view" permission is enough. It prints cash, equity,
+profit/loss since the baseline, and every coin held, marking which ones the
+bot opened and their stops. Deposits and withdrawals after the start count as
+profit or loss.
 
 The runner only ever acts on **closed** bars, and records the last bar it acted
 on so a crash-restart loop cannot re-place the same order.

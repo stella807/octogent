@@ -1,10 +1,16 @@
 import { dirname, join } from 'node:path';
+import type { LiveBaseline } from './baseline.ts';
 import type { PaperAccount } from './paper-broker.ts';
 import type { RunnerState } from './state-store.ts';
 
 /** The paper account sits next to the runner state, so one --state flag locates both. */
 export function paperAccountPath(statePath: string): string {
   return join(dirname(statePath), 'paper-account.json');
+}
+
+/** Recorded when the live bot first starts, next to its state, so `status --live` can show profit. */
+export function liveBaselinePath(statePath: string): string {
+  return join(dirname(statePath), 'live-baseline.json');
 }
 
 export interface PositionStatus {
@@ -136,5 +142,120 @@ export function formatPaperStatus(s: PaperStatus): string {
   if (s.buys === 0) {
     lines.push('', 'No trades yet. Low-frequency strategies can wait days or weeks for a signal.');
   }
+  return lines.join('\n');
+}
+
+export interface HoldingStatus {
+  readonly asset: string;
+  readonly qty: number;
+  readonly price: number | null;
+  readonly value: number | null;
+  /** True when the live runner opened this position and holds a stop for it. */
+  readonly botManaged: boolean;
+  readonly entryPrice: number | null;
+  readonly stopPrice: number | null;
+  readonly unrealized: number | null;
+}
+
+export interface LiveStatus {
+  readonly quote: string;
+  readonly cash: number;
+  /** Cash plus every coin that could be priced. */
+  readonly equity: number;
+  /** True when some coin could not be priced; it is left out of equity, not guessed at. */
+  readonly partial: boolean;
+  readonly baseline: LiveBaseline | null;
+  /** Null until the live bot has recorded a starting balance to measure against. */
+  readonly pnl: number | null;
+  readonly pnlPct: number | null;
+  readonly holdings: readonly HoldingStatus[];
+  readonly killed: boolean;
+  readonly killReason: string | null;
+}
+
+export function liveStatus(
+  balances: Readonly<Record<string, number>>,
+  prices: Readonly<Record<string, number | null>>,
+  quote: string,
+  state: RunnerState,
+  baseline: LiveBaseline | null,
+): LiveStatus {
+  const cash = balances[quote] ?? 0;
+  const holdings: HoldingStatus[] = Object.entries(balances)
+    .filter(([asset, qty]) => asset !== quote && qty > 0)
+    .map(([asset, qty]) => {
+      const price = prices[asset] ?? null;
+      const s = state.symbols[`${asset}/${quote}`];
+      const entryPrice = s?.entryPrice ?? null;
+      return {
+        asset,
+        qty,
+        price,
+        value: price !== null ? qty * price : null,
+        botManaged: entryPrice !== null,
+        entryPrice,
+        stopPrice: s?.stopPrice ?? null,
+        unrealized: price !== null && entryPrice !== null ? qty * (price - entryPrice) : null,
+      };
+    })
+    .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+  const equity = cash + holdings.reduce((sum, h) => sum + (h.value ?? 0), 0);
+  const pnl = baseline ? equity - baseline.startingEquity : null;
+  return {
+    quote,
+    cash,
+    equity,
+    partial: holdings.some((h) => h.price === null),
+    baseline,
+    pnl,
+    pnlPct: baseline && pnl !== null && baseline.startingEquity > 0 ? (pnl / baseline.startingEquity) * 100 : null,
+    holdings,
+    killed: state.killed,
+    killReason: state.killReason,
+  };
+}
+
+/** Balances worth less than a cent are dust from past trades; listing them only adds noise. */
+const DUST = 0.01;
+
+export function formatLiveStatus(s: LiveStatus): string {
+  const money = (v: number): string => `${v < 0 ? '-' : ''}$${Math.abs(v).toFixed(2)}`;
+  const signed = (v: number): string => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`;
+  const price = (v: number): string => `$${v < 1 ? v.toPrecision(4) : v.toFixed(2)}`;
+  const lines = [
+    `REAL ACCOUNT  (live exchange balances in ${s.quote}, read only)`,
+    '================================================================',
+  ];
+  if (s.baseline) {
+    lines.push(`  Started with                 ${money(s.baseline.startingEquity)}  on ${s.baseline.startedAt.slice(0, 10)}`);
+  }
+  lines.push(
+    `  Cash now                     ${money(s.cash)}`,
+    `  Equity now                   ${money(s.equity)}${s.partial ? '  (some coins could not be priced and are left out)' : ''}`,
+  );
+  if (s.pnl !== null && s.pnlPct !== null) {
+    lines.push(`  Profit / loss                ${signed(s.pnl)}  (${s.pnlPct >= 0 ? '+' : ''}${s.pnlPct.toFixed(2)}%)`);
+  } else {
+    lines.push('  Profit / loss                n/a: no starting balance recorded yet (it is saved when `live` first starts)');
+  }
+
+  const shown = s.holdings.filter((h) => h.value === null || h.value >= DUST);
+  lines.push('', shown.length > 0 ? `COINS HELD (${shown.length})` : 'No coins held; the account is all cash.');
+  for (const h of shown) {
+    const tail = h.botManaged
+      ? `  bot entry ${h.entryPrice !== null ? price(h.entryPrice) : '?'}` +
+        `  stop ${h.stopPrice !== null ? price(h.stopPrice) : 'none'}` +
+        `  unrealized ${h.unrealized !== null ? signed(h.unrealized) : 'unavailable'}`
+      : '  (not opened by the bot)';
+    lines.push(
+      `  ${h.asset.padEnd(8)} ${h.qty.toFixed(8)}` +
+      `  now ${h.price !== null ? price(h.price) : 'unavailable'}` +
+      `  worth ${h.value !== null ? money(h.value) : '?'}` + tail,
+    );
+  }
+  if (s.killed) {
+    lines.push('', `KILL SWITCH ACTIVE: ${s.killReason ?? 'unknown'}. The live bot will not trade until its state file is cleared.`);
+  }
+  lines.push('', 'Deposits and withdrawals after the start count as profit or loss here.');
   return lines.join('\n');
 }

@@ -107,20 +107,90 @@ export class ExchangeBroker implements Broker {
     return toFill(symbol, 'sell', order, price, qty);
   }
 
+  /** Every balance and its value in `quote`, for the start-of-run baseline and `status --live`. */
+  async account(quote: string): Promise<AccountSnapshot> {
+    return readAccount(await this.#connect(), quote);
+  }
+
   async #connect(): Promise<CcxtClient> {
-    if (this.#client) return this.#client;
-    const ccxt = (await import('ccxt')) as unknown as Record<string, unknown>;
-    const ExchangeClass = ccxt[this.#options.exchange];
-    if (typeof ExchangeClass !== 'function') {
-      throw new Error(`ccxt has no exchange named "${this.#options.exchange}"`);
-    }
-    this.#client = new (ExchangeClass as new (cfg: unknown) => CcxtClient)({
-      apiKey: this.#options.apiKey,
-      secret: this.#options.secret,
-      enableRateLimit: true,
-    });
+    this.#client ??= await connectCcxt(this.#options.exchange, this.#options.apiKey, this.#options.secret);
     return this.#client;
   }
+}
+
+async function connectCcxt(exchange: string, apiKey: string, secret: string): Promise<CcxtClient> {
+  const ccxt = (await import('ccxt')) as unknown as Record<string, unknown>;
+  const ExchangeClass = ccxt[exchange];
+  if (typeof ExchangeClass !== 'function') {
+    throw new Error(`ccxt has no exchange named "${exchange}"`);
+  }
+  return new (ExchangeClass as new (cfg: unknown) => CcxtClient)({ apiKey, secret, enableRateLimit: true });
+}
+
+/** The two calls that only read an account. Nothing reachable through it can place an order. */
+export type AccountReader = Pick<CcxtClient, 'fetchBalance' | 'fetchTicker'>;
+
+/**
+ * Reading balances needs no live-trading confirmation: it cannot move money.
+ * A key with only "view" permission is enough, and is the safer key to use.
+ */
+export async function connectReadOnly(exchange: string): Promise<AccountReader> {
+  const apiKey = process.env['QUANT_BOT_API_KEY'] ?? '';
+  const secret = process.env['QUANT_BOT_API_SECRET'] ?? '';
+  if (!apiKey || !secret) {
+    throw new Error('reading a real account needs QUANT_BOT_API_KEY and QUANT_BOT_API_SECRET; see .env.example');
+  }
+  const client = await connectCcxt(exchange, apiKey, secret);
+  return { fetchBalance: () => client.fetchBalance(), fetchTicker: (symbol) => client.fetchTicker(symbol) };
+}
+
+export interface AccountSnapshot {
+  /** Total (free + held in open orders) per asset, zero balances dropped. */
+  readonly balances: Readonly<Record<string, number>>;
+  /** Price of one unit in the quote currency; null when no market could price it. */
+  readonly prices: Readonly<Record<string, number | null>>;
+}
+
+/**
+ * Coinbase converts USDC to USD one-for-one and may list no USDC/USD market, so
+ * pricing it through a ticker would report real money as unpriced.
+ */
+const PAR_WITH_USD = new Set(['USDC']);
+
+export async function readAccount(client: AccountReader, quote: string): Promise<AccountSnapshot> {
+  let raw: Awaited<ReturnType<AccountReader['fetchBalance']>>;
+  try {
+    raw = await client.fetchBalance();
+  } catch (error) {
+    if (error instanceof Error && error.constructor.name === 'AuthenticationError') {
+      throw new Error(
+        'the exchange rejected the API key. Check QUANT_BOT_API_KEY and QUANT_BOT_API_SECRET ' +
+        `were copied whole, and that the key has at least "view" permission (${error.message})`,
+      );
+    }
+    throw error;
+  }
+  const balances: Record<string, number> = {};
+  for (const [asset, amount] of Object.entries(raw.total ?? raw.free ?? {})) {
+    const qty = Number(amount);
+    if (Number.isFinite(qty) && qty > 0) balances[asset] = qty;
+  }
+  const prices: Record<string, number | null> = {};
+  // Sequential: one request per coin, and a burst of them is how a key gets rate limited.
+  for (const asset of Object.keys(balances)) {
+    if (asset === quote || (quote === 'USD' && PAR_WITH_USD.has(asset))) {
+      prices[asset] = 1;
+      continue;
+    }
+    try {
+      const ticker = await client.fetchTicker(`${asset}/${quote}`);
+      const price = ticker.last ?? ticker.close;
+      prices[asset] = typeof price === 'number' && Number.isFinite(price) ? price : null;
+    } catch {
+      prices[asset] = null;
+    }
+  }
+  return { balances, prices };
 }
 
 interface CcxtOrder {
@@ -132,7 +202,7 @@ interface CcxtOrder {
 }
 
 export interface CcxtClient {
-  fetchBalance(): Promise<{ free?: Record<string, number> }>;
+  fetchBalance(): Promise<{ free?: Record<string, number>; total?: Record<string, number> }>;
   fetchTicker(symbol: string): Promise<{ last?: number; close?: number }>;
   fetchOHLCV(symbol: string, timeframe: string, since?: number, limit?: number): Promise<(number | undefined)[][]>;
   createMarketBuyOrder(symbol: string, qty: number): Promise<CcxtOrder>;

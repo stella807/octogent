@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { main } from '../src/cli.ts';
+import { defaultStatePath, main } from '../src/cli.ts';
 
 function capture(): { out: () => string; restore: () => void } {
   let buffer = '';
@@ -75,6 +75,25 @@ describe('cli', () => {
 
   it('refuses the live command without the --live flag', async () => {
     await expect(main(['live', '--strategy', 'ema-crossover'])).rejects.toThrow(/--live flag/);
+  });
+
+  it('reading a real account needs credentials but no live-trading confirmation', async () => {
+    const saved = { key: process.env['QUANT_BOT_API_KEY'], secret: process.env['QUANT_BOT_API_SECRET'] };
+    delete process.env['QUANT_BOT_API_KEY'];
+    delete process.env['QUANT_BOT_API_SECRET'];
+    try {
+      await expect(main(['status', '--live', '--exchange', 'coinbase'])).rejects.toThrow(/QUANT_BOT_API_KEY/);
+    } finally {
+      if (saved.key !== undefined) process.env['QUANT_BOT_API_KEY'] = saved.key;
+      if (saved.secret !== undefined) process.env['QUANT_BOT_API_SECRET'] = saved.secret;
+    }
+  });
+
+  it('keeps live state apart from paper state', () => {
+    expect(defaultStatePath('paper', false)).toBe('.quant-bot/runner-state.json');
+    expect(defaultStatePath('status', false)).toBe('.quant-bot/runner-state.json');
+    expect(defaultStatePath('live', true)).toBe('.quant-bot/live-state.json');
+    expect(defaultStatePath('status', true)).toBe('.quant-bot/live-state.json');
   });
 
   it('runs walkforward end to end', async () => {

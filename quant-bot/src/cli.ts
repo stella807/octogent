@@ -23,10 +23,11 @@ import { buyAndHold, getStrategy, STRATEGIES } from './strategy/index.ts';
 import type { Params } from './strategy/types.ts';
 import { PaperBroker, PRICE_LOOKBACK_MINUTES, readPaperAccount } from './live/paper-broker.ts';
 import { StateStore } from './live/state-store.ts';
-import { formatPaperStatus, paperAccountPath, paperStatus, type PaperStatus } from './live/status.ts';
+import { formatLiveStatus, formatPaperStatus, liveBaselinePath, liveStatus, paperAccountPath, paperStatus, type PaperStatus } from './live/status.ts';
+import { readLiveBaseline, recordLiveBaseline } from './live/baseline.ts';
 import { DEFAULT_SCREEN, failed as failedScreen, screenSymbol, shuffleBars, type ScreenCriteria, type ScreenRow } from './backtest/screen.ts';
 import { formatScreen, readScreenFile, screenPath, writeScreenFile } from './screen-file.ts';
-import { ExchangeBroker, LIVE_CONFIRM_ENV, LIVE_CONFIRM_VALUE } from './live/exchange-broker.ts';
+import { connectReadOnly, ExchangeBroker, LIVE_CONFIRM_ENV, LIVE_CONFIRM_VALUE, readAccount, type AccountSnapshot } from './live/exchange-broker.ts';
 import { LiveRunner } from './live/runner.ts';
 import { TelegramNotifier } from './live/notifier.ts';
 import { alignCandles, alignmentCoverage } from './portfolio/align.ts';
@@ -48,7 +49,7 @@ quant-bot — crypto strategy research and paper trading
   walkforward  Pick parameters out-of-sample and report what survived
   montecarlo   Resample trade order to show the real spread of outcomes
   paper        Trade live market data with simulated fills (no real money)
-  status       Paper account profit/loss and every open position
+  status       Paper account profit/loss and every open position; --live reads your real exchange account
   screen       Walk-forward test a strategy on every --quote market of an exchange; keep what passes
   swarm        Simulate a crowd of rule-based traders to forecast P(up); --evaluate scores it honestly
   dashboard    Snapshot every screened coin (forecast, track record, screen, paper position) for the dashboard page
@@ -141,11 +142,12 @@ export async function main(argv: readonly string[]): Promise<number> {
       seed: { type: 'string', default: '42' },
       param: { type: 'string', multiple: true, default: [] },
       live: { type: 'boolean', default: false },
-      state: { type: 'string', default: '.quant-bot/runner-state.json' },
+      state: { type: 'string' },
       json: { type: 'boolean', default: false },
     },
   });
 
+  const statePath = (values.state as string | undefined) ?? defaultStatePath(command, values.live as boolean);
   const timeframe = asTimeframe(values.timeframe as string);
   const limits: RiskLimits = {
     riskPerTradePct: num(values.risk, 'risk'),
@@ -387,9 +389,23 @@ export async function main(argv: readonly string[]): Promise<number> {
     }
 
     case 'status': {
-      const summary = await loadPaperStatus(values.state as string, values.exchange as string);
+      if (values.live) {
+        const quote = values.quote as string;
+        const snapshot = await readAccount(await connectReadOnly(values.exchange as string), quote);
+        const summary = liveStatus(
+          snapshot.balances,
+          snapshot.prices,
+          quote,
+          await new StateStore(statePath).load(),
+          await readLiveBaseline(liveBaselinePath(statePath)),
+        );
+        if (values.json) emit(summary);
+        else process.stdout.write(`${formatLiveStatus(summary)}\n`);
+        return 0;
+      }
+      const summary = await loadPaperStatus(statePath, values.exchange as string);
       if (!summary) {
-        process.stderr.write(`No paper account at ${paperAccountPath(values.state as string)}. Start one with the \`paper\` command.\n`);
+        process.stderr.write(`No paper account at ${paperAccountPath(statePath)}. Start one with the \`paper\` command.\n`);
         return 1;
       }
       if (values.json) emit(summary);
@@ -418,7 +434,6 @@ export async function main(argv: readonly string[]): Promise<number> {
 
     case 'dashboard': {
       const exchange = values.exchange as string;
-      const statePath = values.state as string;
       const screen = await readScreenFile(screenPath(statePath));
       const universe = values.symbols
         ? splitSymbols(values.symbols as string)
@@ -510,7 +525,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         }
         : undefined;
       const passed = rows.filter((r) => r.passed).map((r) => r.symbol);
-      await writeScreenFile(screenPath(values.state as string), {
+      await writeScreenFile(screenPath(statePath), {
         exchange, strategy: factory.name, timeframe, screenedAt: new Date().toISOString(), symbols: passed, rows,
         ...(luck ? { luck } : {}),
       });
@@ -524,18 +539,33 @@ export async function main(argv: readonly string[]): Promise<number> {
       const factory = getStrategy(values.strategy as string);
       const params = { ...factory.defaults, ...overrides };
       const exchange = values.exchange as string;
-      const symbols = await resolveTradeSymbols(values, factory.name, exchange);
+      const symbols = await resolveTradeSymbols(values, factory.name, exchange, statePath);
 
-      const broker = command === 'live'
-        ? liveBroker(values.live as boolean, exchange)
-        : new PaperBroker({
+      const live = command === 'live' ? liveBroker(values.live as boolean, exchange) : null;
+      const broker = live ?? new PaperBroker({
           startingCash: config.startingEquity,
           costs: config.costs,
-          accountPath: paperAccountPath(values.state as string),
+          accountPath: paperAccountPath(statePath),
           feed: (sym, tf, count) => fetchCandles({
             exchange, symbol: sym, timeframe: tf, bars: count, cacheDir: 'data/cache', noCache: true,
           }),
         });
+
+      // Live risk limits are measured from the real balance, not --equity: a
+      // $25 account started with the $10,000 default would read as a 99.75%
+      // drawdown and trip the kill switch on its first bar.
+      let startingEquity = config.startingEquity;
+      if (live) {
+        const quote = quoteOf(symbols);
+        const snapshot = await live.account(quote);
+        startingEquity = tradedEquity(snapshot, symbols, quote);
+        if (!(startingEquity > 0)) throw new Error(`the ${exchange} account holds no ${quote} to trade with`);
+        const baseline = await recordLiveBaseline(liveBaselinePath(statePath), accountEquity(snapshot), quote);
+        process.stdout.write(
+          `real account: ${money(startingEquity)} ${quote} available to the bot; ` +
+          `profit is measured from ${money(baseline.startingEquity)} (${baseline.startedAt.slice(0, 10)})\n`,
+        );
+      }
 
       const runner = new LiveRunner({
         broker,
@@ -544,10 +574,10 @@ export async function main(argv: readonly string[]): Promise<number> {
         symbols,
         timeframe,
         limits,
-        statePath: values.state as string,
+        statePath,
         log: (message) => process.stdout.write(`${message}\n`),
         notifier: TelegramNotifier.fromEnv(),
-      }, config.startingEquity);
+      }, startingEquity);
 
       const controller = new AbortController();
       process.on('SIGINT', () => {
@@ -567,6 +597,40 @@ export async function main(argv: readonly string[]): Promise<number> {
 /** Strips the risk halts so the benchmark measures the asset, not the risk manager. */
 function benchmarkConfig(config: BacktestConfig): BacktestConfig {
   return { ...config, limits: BENCHMARK_LIMITS };
+}
+
+/**
+ * Live trading keeps its own state file. Sharing the paper one would hand the
+ * live bot a paper position's entry and stop, and a paper kill switch.
+ */
+export function defaultStatePath(command: string, live: boolean): string {
+  return command === 'live' || (command === 'status' && live)
+    ? '.quant-bot/live-state.json'
+    : '.quant-bot/runner-state.json';
+}
+
+function quoteOf(symbols: readonly string[]): string {
+  const quotes = new Set(symbols.map((s) => s.split('/')[1] ?? ''));
+  const [quote] = quotes;
+  // The runner shares one cash balance across symbols, so they must share its currency.
+  if (quotes.size !== 1 || !quote) throw new Error(`live symbols must share one quote currency: ${symbols.join(', ')}`);
+  return quote;
+}
+
+/** Cash plus the coins the bot trades: the same equity the runner's risk checks see. */
+function tradedEquity(snapshot: AccountSnapshot, symbols: readonly string[], quote: string): number {
+  const bases = new Set(symbols.map((s) => s.split('/')[0] ?? ''));
+  return accountEquity(snapshot, (asset) => asset === quote || bases.has(asset));
+}
+
+function accountEquity(snapshot: AccountSnapshot, include: (asset: string) => boolean = () => true): number {
+  return Object.entries(snapshot.balances)
+    .filter(([asset]) => include(asset))
+    .reduce((sum, [asset, qty]) => sum + qty * (snapshot.prices[asset] ?? 0), 0);
+}
+
+function money(v: number): string {
+  return `$${v.toFixed(2)}`;
 }
 
 function liveBroker(liveFlag: boolean, exchange: string): ExchangeBroker {
@@ -715,11 +779,12 @@ async function resolveTradeSymbols(
   values: Record<string, unknown>,
   strategy: string,
   exchange: string,
+  statePath: string,
 ): Promise<string[]> {
   const list = values['symbols'] as string | undefined;
   if (list === undefined) return [values['symbol'] as string];
   if (list !== 'screened') return splitSymbols(list);
-  const path = screenPath(values['state'] as string);
+  const path = screenPath(statePath);
   const screen = await readScreenFile(path);
   if (!screen) throw new Error(`no screen results at ${path}; run \`screen\` first`);
   const timeframe = values['timeframe'] as string;
