@@ -117,6 +117,20 @@ describe('PaperBroker persistence', () => {
     expect((await broker.balance('BTC/USD')).cash).toBe(25);
   });
 
+  it('prices a thin market from its latest trade, not just the last two minutes', async () => {
+    // Only trades 40 minutes ago: no candle at all in the last two minutes.
+    const thin = async (): Promise<Candle[]> => series([80, 90], 0);
+    const broker = new PaperBroker({ startingCash: 25, costs: FRICTIONLESS, feed: thin });
+    expect(await broker.lastPrice('CRO/USD')).toBe(90);
+    let asked = 0;
+    const counting = async (_s: string, _t: Timeframe, bars: number): Promise<Candle[]> => {
+      asked = bars;
+      return series([1], 0);
+    };
+    await new PaperBroker({ startingCash: 25, costs: FRICTIONLESS, feed: counting }).lastPrice('CRO/USD');
+    expect(asked).toBeGreaterThanOrEqual(60);
+  });
+
   it('keeps the old in-memory behaviour when no account path is given', async () => {
     const broker = new PaperBroker({ startingCash: 25, costs: FRICTIONLESS, feed });
     await broker.marketBuy('BTC/USD', 10);
@@ -184,7 +198,9 @@ describe('paper status', () => {
     });
     expect(s.partial).toBe(true);
     expect(s.positions[0]?.unrealized).toBeNull();
-    expect(formatPaperStatus(s)).toMatch(/unpriced/);
+    expect(formatPaperStatus(s)).toMatch(/carried at entry price/);
+    expect(s.equity).toBeCloseTo(15 + 0.1 * 100, 9);
+    expect(s.pnl).toBeCloseTo(0, 9);
   });
 
   it('totals closed round trips per symbol', () => {

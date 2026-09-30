@@ -14,6 +14,7 @@ export interface PositionStatus {
   readonly stopPrice: number | null;
   /** Null when the current price could not be fetched. */
   readonly price: number | null;
+  /** Marked at the current price, or at entry when no price could be fetched. */
   readonly value: number | null;
   readonly unrealized: number | null;
 }
@@ -23,7 +24,7 @@ export interface PaperStatus {
   readonly cash: number;
   /** Cash plus every position that could be priced. */
   readonly equity: number;
-  /** True when some position could not be priced, so equity understates. */
+  /** True when some position could not be priced and is carried at its entry price. */
   readonly partial: boolean;
   readonly pnl: number;
   readonly pnlPct: number;
@@ -53,7 +54,9 @@ export function paperStatus(
         entryPrice,
         stopPrice: state.symbols[symbol]?.stopPrice ?? null,
         price,
-        value: price !== null ? qty * price : null,
+        // An unpriced position is still held: counting it as zero would report
+        // its whole value as a loss. Entry price is the neutral stand-in.
+        value: price !== null ? qty * price : entryPrice !== null ? qty * entryPrice : null,
         unrealized: price !== null && entryPrice !== null ? qty * (price - entryPrice) : null,
       };
     });
@@ -63,7 +66,7 @@ export function paperStatus(
     startingCash: account.startingCash,
     cash: account.cash,
     equity,
-    partial: positions.some((p) => p.value === null),
+    partial: positions.some((p) => p.price === null),
     pnl,
     pnlPct: account.startingCash > 0 ? (pnl / account.startingCash) * 100 : 0,
     buys: account.fills.filter((f) => f.side === 'buy').length,
@@ -104,7 +107,7 @@ export function formatPaperStatus(s: PaperStatus): string {
     '================================================================',
     `  Starting cash                ${money(s.startingCash)}`,
     `  Cash now                     ${money(s.cash)}`,
-    `  Equity now                   ${money(s.equity)}${s.partial ? '  (some positions unpriced; not included)' : ''}`,
+    `  Equity now                   ${money(s.equity)}${s.partial ? '  (some positions unpriced; carried at entry price)' : ''}`,
     `  Profit / loss                ${signed(s.pnl)}  (${s.pnlPct >= 0 ? '+' : ''}${s.pnlPct.toFixed(2)}%)`,
     `  Fills                        ${s.buys} buys, ${s.sells} sells, ${money(s.feesPaid)} in fees`,
   ];

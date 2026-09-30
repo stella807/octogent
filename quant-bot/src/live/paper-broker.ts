@@ -4,6 +4,9 @@ import type { Candle, Timeframe } from '../domain/types.ts';
 import { buyFillPrice, DEFAULT_COSTS, feeOn, sellFillPrice, type CostModel } from '../backtest/costs.ts';
 import { OrderRejectedError, type Balance, type Broker, type Fill } from './broker.ts';
 
+/** How far back to look for a coin's latest trade. */
+export const PRICE_LOOKBACK_MINUTES = 60;
+
 export interface PaperBrokerOptions {
   readonly startingCash: number;
   readonly costs: CostModel;
@@ -62,9 +65,13 @@ export class PaperBroker implements Broker {
   }
 
   async lastPrice(symbol: string): Promise<number> {
-    const candles = await this.#feed(symbol, '1m', 2);
+    // Exchanges only publish a 1-minute candle for minutes that traded. A thin
+    // market can go several minutes without a trade, and asking for just the
+    // last two minutes then finds nothing — failing every order, stop-loss
+    // sells included, until someone happens to trade.
+    const candles = await this.#feed(symbol, '1m', PRICE_LOOKBACK_MINUTES);
     const last = candles[candles.length - 1];
-    if (!last) throw new Error(`no price available for ${symbol}`);
+    if (!last) throw new Error(`no trade in ${symbol} in the last ${PRICE_LOOKBACK_MINUTES} minutes`);
     return last.close;
   }
 

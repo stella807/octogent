@@ -18,7 +18,7 @@ import { BENCHMARK_LIMITS, CONSERVATIVE_LIMITS, DEFAULT_LIMITS, type RiskLimits 
 import { formatBacktest, formatMonteCarlo, formatPortfolio, formatSearch, formatWalkForward } from './report.ts';
 import { buyAndHold, getStrategy, STRATEGIES } from './strategy/index.ts';
 import type { Params } from './strategy/types.ts';
-import { PaperBroker, readPaperAccount } from './live/paper-broker.ts';
+import { PaperBroker, PRICE_LOOKBACK_MINUTES, readPaperAccount } from './live/paper-broker.ts';
 import { StateStore } from './live/state-store.ts';
 import { formatPaperStatus, paperAccountPath, paperStatus } from './live/status.ts';
 import { DEFAULT_SCREEN, failed as failedScreen, screenSymbol, shuffleBars, type ScreenCriteria, type ScreenRow } from './backtest/screen.ts';
@@ -394,7 +394,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         if (qty <= 0) continue;
         try {
           const recent = await fetchCandles({
-            exchange: values.exchange as string, symbol, timeframe: '1m', bars: 2, cacheDir: 'data/cache', noCache: true,
+            exchange: values.exchange as string, symbol, timeframe: '1m', bars: PRICE_LOOKBACK_MINUTES, cacheDir: 'data/cache', noCache: true,
           });
           prices[symbol] = recent[recent.length - 1]?.close ?? null;
         } catch {
