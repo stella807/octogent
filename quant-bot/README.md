@@ -1022,6 +1022,27 @@ All thirteen run as validators on BTC and ETH, gathering live evidence with
 validator money. They reach real money only through the fleet's promotion
 rules, which are unchanged.
 
+**Three more, with the bar fixed in advance (2026-09-30).** After the
+thirteen, three strategies built on the one idea that survived testing (several
+views must agree): `momentum-vote` (2 of 3 return horizons positive),
+`volume-trend` (trend-hold entered only on rising volume) and `family-vote`
+(3 of 5 signals from different families: moving average, momentum,
+supertrend, MACD sign, channel position). The pass bar was written down
+before running: beats its own shuffled prices at p < 1.7% (0.05 / 3 tries),
+positive median out-of-sample return, and profitable on more than half of the
+38 coins.
+
+| Strategy | Beats shuffled | Profitable | Median return | Median worst drop | Median trades |
+|---|---|---|---|---|---|
+| momentum-vote | 23/38 (12.8%) | 12/38 | -14% | 37% | 6 |
+| volume-trend | 19/38 (56.4%) | 14/38 | -3% | 31% | 4 |
+| family-vote | 20/38 (43.6%) | 17/38 | -6% | 39% | 4 |
+
+None meets any of the three conditions and none passes the fleet's vote.
+Ensembles of trend signals did not help here: `trend-vote` (30/38, +10%
+median) remains the best of everything tried on these coins. They run as
+validators on BTC and ETH.
+
 **TradingView data.** TradingView has no public data API, and the
 unofficial scrapers break its terms, so the fleet does not pull from it. Its
 `COINBASE:` charts show Coinbase's own feed, which is what the bots already

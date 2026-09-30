@@ -23,7 +23,7 @@ interface Rules {
 
 type Build = (candles: readonly Candle[], params: Params) => Rules;
 
-function longFlat(
+export function longFlat(
   name: string,
   defaults: Params,
   grid: Readonly<Record<string, readonly number[]>>,
@@ -50,10 +50,10 @@ function longFlat(
   };
 }
 
-const at = (s: Series, i: number): number | null => s[i] ?? null;
+export const at = (s: Series, i: number): number | null => s[i] ?? null;
 
 /** Highest of the `n` values BEFORE bar i (excludes i), so a close can break it. */
-function priorExtreme(values: readonly number[], n: number, pick: 'max' | 'min'): Series {
+export function priorExtreme(values: readonly number[], n: number, pick: 'max' | 'min'): Series {
   const out: (number | null)[] = new Array(values.length).fill(null);
   for (let i = n; i < values.length; i += 1) {
     let v = values[i - 1] as number;
@@ -64,7 +64,7 @@ function priorExtreme(values: readonly number[], n: number, pick: 'max' | 'min')
 }
 
 /** Extreme of the `n` values ending AT bar i (includes i). */
-function windowExtreme(values: readonly number[], n: number, pick: 'max' | 'min'): Series {
+export function windowExtreme(values: readonly number[], n: number, pick: 'max' | 'min'): Series {
   const out: (number | null)[] = new Array(values.length).fill(null);
   for (let i = n - 1; i < values.length; i += 1) {
     let v = values[i] as number;
@@ -74,8 +74,39 @@ function windowExtreme(values: readonly number[], n: number, pick: 'max' | 'min'
   return out;
 }
 
-function check(cond: boolean, message: string): void {
+export function check(cond: boolean, message: string): void {
   if (!cond) throw new RangeError(message);
+}
+
+/** Supertrend direction per bar: a trailing ATR band that flips the trend when price closes through it. */
+export function supertrendUp(candles: readonly Candle[], period: number, mult: number): boolean[] {
+  const range = atr(candles, period);
+  const up: boolean[] = new Array(candles.length).fill(false);
+  let upper = 0;
+  let lower = 0;
+  let trendUp = false;
+  let started = false;
+  for (let i = 0; i < candles.length; i += 1) {
+    const a = at(range, i);
+    if (a === null) continue;
+    const c = candles[i] as Candle;
+    const mid = (c.high + c.low) / 2;
+    const bandUpper = mid + mult * a;
+    const bandLower = mid - mult * a;
+    if (!started) {
+      upper = bandUpper;
+      lower = bandLower;
+      trendUp = c.close > upper;
+      started = true;
+    } else {
+      const prevClose = (candles[i - 1] as Candle).close;
+      upper = bandUpper < upper || prevClose > upper ? bandUpper : upper;
+      lower = bandLower > lower || prevClose < lower ? bandLower : lower;
+      trendUp = trendUp ? c.close >= lower : c.close > upper;
+    }
+    up[i] = trendUp;
+  }
+  return up;
 }
 
 /** 1. Enter on a close above the prior N-bar high; leave on a close below the prior M-bar low. */
@@ -177,32 +208,7 @@ export const supertrendHold = longFlat(
     const period = param(p, 'period', 10);
     const mult = param(p, 'mult', 3);
     check(mult > 0, `supertrend-hold needs mult > 0, got ${mult}`);
-    const range = atr(candles, period);
-    const up: boolean[] = new Array(candles.length).fill(false);
-    let upper = 0;
-    let lower = 0;
-    let trendUp = false;
-    let started = false;
-    for (let i = 0; i < candles.length; i += 1) {
-      const a = at(range, i);
-      if (a === null) continue;
-      const c = candles[i] as Candle;
-      const mid = (c.high + c.low) / 2;
-      const bandUpper = mid + mult * a;
-      const bandLower = mid - mult * a;
-      if (!started) {
-        upper = bandUpper;
-        lower = bandLower;
-        trendUp = c.close > upper;
-        started = true;
-      } else {
-        const prevClose = (candles[i - 1] as Candle).close;
-        upper = bandUpper < upper || prevClose > upper ? bandUpper : upper;
-        lower = bandLower > lower || prevClose < lower ? bandLower : lower;
-        trendUp = trendUp ? c.close >= lower : c.close > upper;
-      }
-      up[i] = trendUp;
-    }
+    const up = supertrendUp(candles, period, mult);
     return { params: { period, mult }, warmup: period + 1, enter: (i) => up[i] === true, hold: (i) => up[i] === true };
   },
 );
