@@ -7,7 +7,7 @@ import {
   TRIAL_MS,
   type BotSpec,
 } from '../src/live/fleet.ts';
-import { formatFleetStatus } from '../src/live/fleet.ts';
+import { addValidators, botSpec, formatFleetStatus, type FleetFile } from '../src/live/fleet.ts';
 import type { PaperStatus } from '../src/live/status.ts';
 
 const DAY = 86_400_000;
@@ -122,5 +122,34 @@ describe('fleet status with validators', () => {
     expect(text).toMatch(/VALIDATORS/);
     expect(text).toMatch(/trend-hold SOL\/USD 1d +\+\$0\.40  demoted: efficiency -0\.38/);
     expect(text).toMatch(/trend-hold@1d +WORTHY: 5 of 12 markets/);
+  });
+});
+
+describe('addValidators', () => {
+  const base: FleetFile = {
+    exchange: 'coinbase', createdAt: 'x',
+    bots: [botSpec('daily strategies', 'daily', 'trend-hold', 'ETH/USD', '1d', 2.5)],
+    validators: [botSpec('trend-hold x32', 'top', 'trend-hold', 'DOGE/USD', '1d', 2.5)],
+    reserve: [botSpec('trend-hold x32', 'top', 'trend-hold', 'PUMP/USD', '1d', 2.5)],
+  };
+
+  it('adds new candidates as validators, never straight to real money', () => {
+    const next = addValidators(base, [botSpec('meme coins', 'meme', 'trend-hold', 'PEPE/USD', '1d', 2.5)]);
+    expect(next.validators?.map((v) => v.name)).toContain('meme-trend-hold-pepeusd');
+    expect(next.bots).toHaveLength(1);
+  });
+
+  it('skips a coin the fleet already trades or validates with that strategy', () => {
+    const next = addValidators(base, [
+      botSpec('meme coins', 'meme', 'trend-hold', 'DOGE/USD', '1d', 2.5),
+      botSpec('meme coins', 'meme', 'trend-hold', 'ETH/USD', '1d', 2.5),
+    ]);
+    expect(next.validators).toHaveLength(1);
+  });
+
+  it('pulls a queued duplicate forward instead of keeping two copies', () => {
+    const next = addValidators(base, [botSpec('meme coins', 'meme', 'trend-hold', 'PUMP/USD', '1d', 2.5)]);
+    expect(next.reserve).toHaveLength(0);
+    expect(next.validators?.some((v) => v.symbols[0] === 'PUMP/USD')).toBe(true);
   });
 });

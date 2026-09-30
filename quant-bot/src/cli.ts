@@ -35,6 +35,9 @@ import {
   botStatePath,
   consensusVerdict,
   demotionReason,
+  addValidators,
+  botSpec,
+  DEFAULT_BOT_EQUITY,
   describeConsensus,
   isControl,
   promotionVerdict,
@@ -82,6 +85,7 @@ quant-bot — crypto strategy research and paper trading
   fleet-init   Plan a paper fleet of 10 bots sharing --budget (default $250), the rest of the 76-bot plan queued; --size full starts all 76
   fleet        Run every bot in the fleet file at once; adds queued bots as realized profits pay for them
   fleet-status Every fleet bot's profit, grouped, next to its coin-flip control
+  fleet-add    Add candidates (--strategy on --symbols) as validators; they trade real money only once the fleet deems them worthy
   status       Paper account profit/loss and every open position; --live reads your real exchange account
   screen       Walk-forward test a strategy on every --quote market of an exchange; keep what passes
   swarm        Simulate a crowd of rule-based traders to forecast P(up); --evaluate scores it honestly
@@ -187,6 +191,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       fleet: { type: 'string', default: '.quant-bot/fleet/fleet.json' },
       size: { type: 'string', default: 'core' },
       budget: { type: 'string', default: '250' },
+      group: { type: 'string', default: 'added' },
     },
   });
 
@@ -743,6 +748,13 @@ export async function main(argv: readonly string[]): Promise<number> {
         const now = new Date(nowMs).toISOString();
         const life: Record<string, BotLife> = { ...fleet.life };
         const fresh = (at: string | undefined): boolean => at !== undefined && nowMs - Date.parse(at) < REVALIDATE_MS;
+        // Validators added from outside (fleet-add) start trading validator money here.
+        for (const spec of fleet.validators ?? []) {
+          if (live.has(spec.name)) continue;
+          life[spec.name] ??= { bornAt: now, shadowRound: 1 };
+          start(spec, 'validator', shadowStatePath(fleetDir, spec.name, life[spec.name]?.shadowRound ?? 1));
+          process.stdout.write(`[fleet] ${spec.name} joins the validators\n`);
+        }
         const budget = fleet.budget ?? fleet.bots
           .filter((b) => !(fleet.added ?? []).some((a) => a.name === b.name))
           .reduce((sum, b) => sum + b.equity, 0);
@@ -946,6 +958,26 @@ export async function main(argv: readonly string[]): Promise<number> {
       // separate processes would each open their own and trip the exchange's limits.
       await new Promise<void>((resolve) => controller.signal.addEventListener('abort', () => resolve()));
       await Promise.all(runs);
+      return 0;
+    }
+
+    case 'fleet-add': {
+      const fleetPath = values.fleet as string;
+      const fleet = parseFleet(await readFile(fleetPath, 'utf8'));
+      if (!values.symbols) throw new Error('fleet-add needs --symbols, e.g. --symbols PEPE/USD,BONK/USD');
+      const factory = getStrategy(values.strategy as string);
+      const group = values.group as string;
+      const prefix = group.toLowerCase().split(/\s+/)[0]?.replace(/[^a-z0-9]/g, '') || 'added';
+      const equity = fleet.bots[0]?.equity ?? DEFAULT_BOT_EQUITY;
+      const candidates = splitSymbols(values.symbols as string)
+        .map((symbol) => botSpec(group, prefix, factory.name, symbol, timeframe, equity));
+      const next = addValidators(fleet, candidates);
+      await writeFleet(fleetPath, next);
+      const added = (next.validators ?? []).length - (fleet.validators ?? []).length;
+      process.stdout.write(
+        `Added ${added} of ${candidates.length} as validators (the rest are already in the fleet). A running fleet ` +
+        `starts them within the hour; they trade validator money until the fleet deems them worthy.\n`,
+      );
       return 0;
     }
 

@@ -273,7 +273,8 @@ function maxDrawdownFor(strategy: string): number {
   return 15;
 }
 
-function bot(group: string, prefix: string, strategy: string, symbol: string, timeframe: Timeframe, equity: number): BotSpec {
+/** One single-market bot, named `<prefix>-<strategy>-<market>` so names stay unique and folder-safe. */
+export function botSpec(group: string, prefix: string, strategy: string, symbol: string, timeframe: Timeframe, equity: number): BotSpec {
   return {
     name: `${prefix}-${strategy}-${slug(symbol)}`,
     group,
@@ -288,9 +289,9 @@ function bot(group: string, prefix: string, strategy: string, symbol: string, ti
 
 export function planFleet(topCoins: readonly string[], equity: number = DEFAULT_BOT_EQUITY): BotSpec[] {
   return [
-    ...DAILY_STRATEGIES.flatMap((s) => DAILY_SYMBOLS.map((sym) => bot('daily strategies', 'daily', s, sym, '1d', equity))),
-    ...topCoins.map((sym) => bot('trend-hold x32', 'top', 'trend-hold', sym, '1d', equity)),
-    ...FAST_STRATEGIES.flatMap((s) => FAST_SYMBOLS.map((sym) => bot('fast (1-minute)', 'fast', s, sym, '1m', equity))),
+    ...DAILY_STRATEGIES.flatMap((s) => DAILY_SYMBOLS.map((sym) => botSpec('daily strategies', 'daily', s, sym, '1d', equity))),
+    ...topCoins.map((sym) => botSpec('trend-hold x32', 'top', 'trend-hold', sym, '1d', equity)),
+    ...FAST_STRATEGIES.flatMap((s) => FAST_SYMBOLS.map((sym) => botSpec('fast (1-minute)', 'fast', s, sym, '1m', equity))),
   ];
 }
 
@@ -305,19 +306,19 @@ export function planCoreFleet(equity: number = DEFAULT_BOT_EQUITY): BotSpec[] {
   const daily = 'daily strategies';
   const fast = 'fast (1-minute)';
   const candidates = [
-    bot(daily, 'daily', 'trend-hold', 'BTC/USD', '1d', equity),
-    bot(daily, 'daily', 'trend-hold', 'ETH/USD', '1d', equity),
-    bot(daily, 'daily', 'donchian-breakout', 'BTC/USD', '1d', equity),
-    bot(daily, 'daily', 'ema-zone-reversal', 'BTC/USD', '1d', equity),
-    bot(daily, 'daily', 'buy-and-hold', 'BTC/USD', '1d', equity),
-    bot(daily, 'daily', 'coin-flip', 'BTC/USD', '1d', equity),
-    bot(fast, 'fast', 'donchian-breakout', 'BTC/USD', '1m', equity),
-    bot(fast, 'fast', 'ema-crossover', 'BTC/USD', '1m', equity),
-    bot(fast, 'fast', 'tsmom', 'BTC/USD', '1m', equity),
-    bot(fast, 'fast', 'coin-flip', 'BTC/USD', '1m', equity),
+    botSpec(daily, 'daily', 'trend-hold', 'BTC/USD', '1d', equity),
+    botSpec(daily, 'daily', 'trend-hold', 'ETH/USD', '1d', equity),
+    botSpec(daily, 'daily', 'donchian-breakout', 'BTC/USD', '1d', equity),
+    botSpec(daily, 'daily', 'ema-zone-reversal', 'BTC/USD', '1d', equity),
+    botSpec(daily, 'daily', 'buy-and-hold', 'BTC/USD', '1d', equity),
+    botSpec(daily, 'daily', 'coin-flip', 'BTC/USD', '1d', equity),
+    botSpec(fast, 'fast', 'donchian-breakout', 'BTC/USD', '1m', equity),
+    botSpec(fast, 'fast', 'ema-crossover', 'BTC/USD', '1m', equity),
+    botSpec(fast, 'fast', 'tsmom', 'BTC/USD', '1m', equity),
+    botSpec(fast, 'fast', 'coin-flip', 'BTC/USD', '1m', equity),
     // Stand-ins for bots too small to trade: the ETH benchmark for trend-hold ETH, then SOL.
-    bot(daily, 'daily', 'buy-and-hold', 'ETH/USD', '1d', equity),
-    bot('trend-hold x32', 'top', 'trend-hold', 'SOL/USD', '1d', equity),
+    botSpec(daily, 'daily', 'buy-and-hold', 'ETH/USD', '1d', equity),
+    botSpec('trend-hold x32', 'top', 'trend-hold', 'SOL/USD', '1d', equity),
   ];
   return candidates.filter(canTrade).slice(0, 10);
 }
@@ -340,6 +341,23 @@ export function planReserve(full: readonly BotSpec[], running: readonly BotSpec[
 }
 
 /** Two bots running one strategy on one market at one speed would only ever make the same trades. */
+/**
+ * Adds candidates as validators: they trade validator money and vote, and
+ * reach real money only through the fleet's promotion rules. A candidate
+ * that duplicates a trader or validator is skipped; one already queued is
+ * pulled forward rather than kept twice.
+ */
+export function addValidators(fleet: FleetFile, candidates: readonly BotSpec[]): FleetFile {
+  const validators = [...(fleet.validators ?? [])];
+  let reserve = [...(fleet.reserve ?? [])];
+  for (const c of candidates) {
+    if ([...fleet.bots, ...validators].some((b) => sameTrade(b, c))) continue;
+    reserve = reserve.filter((r) => !sameTrade(r, c));
+    validators.push(c);
+  }
+  return { ...fleet, validators, reserve };
+}
+
 export function sameTrade(a: BotSpec, b: BotSpec): boolean {
   return a.strategy === b.strategy && a.timeframe === b.timeframe
     && a.symbols.length === b.symbols.length && a.symbols.every((s, i) => s === b.symbols[i]);

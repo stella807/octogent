@@ -773,6 +773,7 @@ luck too. Not built.
 pnpm cli fleet-init --exchange coinbase   # 10 bots (below); --size full plans all 76, ranking every USD market by dollar volume
 pnpm cli fleet                            # runs every bot in one process, one shared rate-limited connection
 pnpm cli fleet-status                     # grouped profit table
+pnpm cli fleet-add --strategy trend-hold --symbols PEPE/USD,BONK/USD --group "meme coins"   # candidates join as validators
 ```
 
 - **Daily strategies (12):** trend-hold, donchian-breakout,
@@ -866,6 +867,22 @@ The first round on the $25 fleet (2026-09-30):
   strategy in.
 - trend-hold VVV was **promoted**, paid for by the treasury.
 - 18 bots are validators.
+
+**Meme coins, tested (2026-09-30).** Coinbase lists 22 of the well-known
+ones. Across them:
+
+- **Holding lost money on 20 of 22**, most by 67–97%.
+- **Every one fell 84–98% from a peak** at some point, the two survivors
+  (PENGU −3%, PUMP −14%) included.
+- **trend-hold failed its own-market test on 21.** Most of the failures
+  were too new for 3 walk-forward folds; the rest were curve-fit. PUMP
+  passed (+276% out of sample, not a lucky pass).
+- **Some are too thin to price reliably.** KEYCAT had no trade on Coinbase
+  in a whole hour.
+
+The meme coins were added with `fleet-add --group "meme coins"`. They are
+validators: they trade meme coins with validator money and vote with their
+markets, and they reach real money only through the promotion rules.
 
 **TradingView data.** TradingView has no public data API, and the
 unofficial scrapers break its terms, so the fleet does not pull from it. Its
