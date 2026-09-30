@@ -911,7 +911,7 @@ written from Arkham's documentation without a key to confirm it, so parsing
 is strict: anything unexpected stops with an error naming what arrived.
 
 ```powershell
-$env:ARKHAM_API_KEY = Read-Host -AsSecureString "Arkham API key" | ConvertFrom-SecureString -AsPlainText
+$env:ARKHAM_API_KEY = Read-Host "Paste your Arkham API key"   # typed input is not saved to PowerShell history
 node --experimental-strip-types src/cli.ts whales --exchange coinbase --symbol ETH/USD
 node --experimental-strip-types src/cli.ts whales --exchange coinbase --symbols ETH/USD,BTC/USD,SOL/USD,XRP/USD,UNI/USD,ZEC/USD,XLM/USD,DOGE/USD,LINK/USD
 ```
