@@ -745,6 +745,28 @@ and none of that protection.
 The grid wins more than three trades in four and still loses money, because
 it is most heavily loaded exactly when price is falling hardest.
 
+## A supervisor that switches strategies in real time — tested, and it loses
+
+The idea: one bot watches the others and moves everyone to whichever
+strategy is winning right now, re-checking as fast as possible. New prices
+arrive once a bar, so re-checking every bar is the fastest that means
+anything; every 5 ms would re-pick on identical data. The test: at each
+re-pick, switch to the strategy with the best trailing return (past bars
+only), pay a round-trip fee per switch, and compare against sticking with one
+strategy. Coinbase data, 0.6% fee (2026-09-30):
+
+| | Stick with trend-hold | Stick with buy-and-hold | Supervisor, re-pick every bar | Best of 12 supervisor settings |
+|---|---|---|---|---|
+| BTC daily, ~7 years | +505% | +671% | −39% to +142% | +1,002% (365-day look-back, monthly) |
+| ETH daily, same setting | +873% | +1,073% | +96% | +267% |
+| SOL daily, same setting | +168% | +288% | +95% | +165% |
+| BTC 1-minute, 48 h | — | +1.3% | −64% to −98% | −26% |
+
+The faster it switches, the worse it does: each switch costs fees, and
+last period's winner is mostly last period's luck. The one BTC setting that
+won was the best of 12 tries and fell behind on ETH and SOL, so it was
+luck too. Not built.
+
 ## The paper fleet: 76 bots, each with a luck control
 
 ```bash
