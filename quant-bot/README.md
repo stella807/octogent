@@ -744,6 +744,39 @@ and none of that protection.
 The grid wins more than three trades in four and still loses money, because
 it is most heavily loaded exactly when price is falling hardest.
 
+## trend-hold — the first rule that keeps up with buy-and-hold (2026-09-30)
+
+Why everything else trails buy-and-hold is sizing, not signal: every other
+trend rule carries a tight ATR stop, the 1%-risk sizing turns each entry
+into a few percent of the account, and the strategy sits in cash ~95% of
+the time. `trend-hold` is the textbook 200-day filter (Faber 2007) with no
+tight stop: hold the whole position while the close is above the 200-bar
+average, go to cash when it closes 2% below it. Parameters are the textbook
+ones, not tuned.
+
+Coinbase BTC/USD, daily, ~8 years, $25, 0.6% fee, kill switch off for both
+so the benchmark and the rule are judged alike:
+
+| | Return | Worst drop | Invested | Trades |
+|---|---|---|---|---|
+| buy-and-hold | +1,200% | 77% | 100% | 1 |
+| **trend-hold** | **+1,221%** | **55%** | 54% | 16 |
+| 2022 bear (Nov 2021 – Dec 2022), buy-and-hold | −73% | 77% | | |
+| 2022 bear, trend-hold | −24% | 32% | | |
+
+- **Walk-forward efficiency 0.69** (passes), but on only 9 out-of-sample
+  trades: suggestive, not proof.
+- **Every setting tested was profitable** (period 50–250 × band 0–5%:
+  +540% to +3,870%, worst drops 39–70%). The best of those is not the
+  default on purpose; picking it would be fitting the past.
+- **It does not transfer to altcoins reliably.** Better than holding on
+  ETH, AVAX, DOGE and ADA; worse on SOL, LTC, LINK and XRP; worst drops of
+  72–92% on most of them. Treat it as a BTC (maybe ETH) rule.
+- **It conflicts with the default kill switch.** A 55% drop is normal for
+  it, so a 15% `--max-drawdown` halts it for good after the first pullback
+  (+117% instead of +1,221%). Running it means choosing a larger limit, and
+  accepting that the account can halve before the rule gets out.
+
 ## Binary options — simulated, and why there is no live version
 
 `binary` bets up or down at each close, settles `--expiry` bars later, pays
@@ -851,6 +884,7 @@ at these horizons do not contain any it can find.
 | `take-profit-scalp` | tiny target, distant or absent stop | **Not for trading.** The 99%-win-rate demo above. |
 | `grid-range` | buys a slice per ATR step below its average, sells each a step higher | 78% win rate, loses money; fails walk-forward (efficiency 0.40). |
 | `dca-safety` | base order + safety orders, take profit on average cost | 93% win rate, payoff 0.15; passes walk-forward (0.70) but Calmar only 0.24. |
+| `trend-hold` | full position above the 200-bar average, cash below | Matches buy-and-hold on BTC (+1,221% vs +1,200%) with a 55% worst drop vs 77%; walk-forward 0.69 on 9 trades; does not transfer reliably to altcoins. |
 
 `search` is a command, not a strategy -- see above for what it tests.
 
