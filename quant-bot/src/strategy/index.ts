@@ -15,6 +15,7 @@ import { dcaSafety } from './dca-safety.ts';
 import { trendHold } from './trend-hold.ts';
 import { coinFlipStrategy } from './coin-flip.ts';
 import { trendHoldWhales } from './trend-hold-whales.ts';
+import { trendHoldDual, trendHoldSlope, trendHoldTrail } from './trend-hold-variants.ts';
 import type { StrategyFactory } from './types.ts';
 
 export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
@@ -35,6 +36,9 @@ export const STRATEGIES: Readonly<Record<string, StrategyFactory>> = {
   [trendHold.name]: trendHold,
   [coinFlipStrategy.name]: coinFlipStrategy,
   [trendHoldWhales.name]: trendHoldWhales,
+  [trendHoldDual.name]: trendHoldDual,
+  [trendHoldTrail.name]: trendHoldTrail,
+  [trendHoldSlope.name]: trendHoldSlope,
 };
 
 export function getStrategy(name: string): StrategyFactory {

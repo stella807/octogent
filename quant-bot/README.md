@@ -924,6 +924,31 @@ earns a place only if its consensus is worthy and it beats trend-hold on
 most coins. Until then the fleet keeps trend-hold. With no whale data,
 trend-hold-whales trades exactly like trend-hold.
 
+**Trying to improve trend-hold (2026-09-30).** Three one-change variants,
+none of which sets a stop price (a tight stop would shrink the position to a
+sliver, the very thing trend-hold avoids):
+
+- `trend-hold-dual`: enter only when the 50-bar average is also above the
+  200-bar.
+- `trend-hold-trail`: also exit when price falls 3 typical daily ranges from
+  its high.
+- `trend-hold-slope`: enter only when the 200-bar average is rising.
+
+Across the fleet's 38 daily markets, out of sample, 0.6% fee:
+
+| | Passes on | Consensus | Avg trades / coin | Avg worst drop |
+|---|---|---|---|---|
+| trend-hold | 7 of 38 | **worthy** | 17.2 | 57% |
+| dual | 0 | not worthy | 4.6 | 39% |
+| trail | 2 | not worthy | 8.3 | 47% |
+| slope | 0 | not worthy | 4.2 | 38% |
+
+The variants do cut the worst drop. But `dual` and `slope` make so few
+trades that 34 of 38 markets fail the 10-trade minimum, so the screen cannot
+say whether they are good, only that it cannot tell. That is not evidence
+for them. None replaces trend-hold. They run as validators on BTC and ETH,
+collecting live evidence with validator money.
+
 **TradingView data.** TradingView has no public data API, and the
 unofficial scrapers break its terms, so the fleet does not pull from it. Its
 `COINBASE:` charts show Coinbase's own feed, which is what the bots already
