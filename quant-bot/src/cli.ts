@@ -9,6 +9,7 @@ import { DEFAULT_WF_OPTIONS, walkForward, type Objective } from './backtest/walk
 import { loadCsv } from './data/csv.ts';
 import { fetchCandles, listMarkets } from './data/exchange.ts';
 import { mapPool } from './concurrency.ts';
+import { mulberry32 } from './backtest/monte-carlo.ts';
 import { buildSwarm, DEFAULT_SWARM, forecastAt } from './swarm/swarm.ts';
 import { evaluateSwarm } from './swarm/score.ts';
 import { coinFlip, formatBinary, runBinary, type BinaryOptions, type Call } from './backtest/binary.ts';
@@ -74,6 +75,8 @@ import { flowEdge } from './research/flow-test.ts';
 import { formatGoal } from './research/goal.ts';
 import { fetchPriceHistory, fetchResolvedMarkets } from './data/polymarket.ts';
 import { bucketLabel, buildObservations, runStudy, type Observation } from './research/polymarket.ts';
+import { fetchKalshiCandles, sampleSettledMarkets } from './data/kalshi.ts';
+import { buildKalshiObservations, kalshiBucketLabel, runKalshiStudy, type KalshiObservation } from './research/kalshi.ts';
 import {
   candidateId, confirmedBotSpecs, emptyState, evaluateSet, formatResearchStatus, loadConfirmed, loadState,
   passesDev, passesHoldout, sampleCandidate, saveState, writeJsonAtomic, type TrialRecord,
@@ -102,6 +105,7 @@ quant-bot — crypto strategy research and paper trading
   research     Background search for better strategies: candidates are screened on the fleet's coins and confirmed once on coins never used; winners join as validators
   research-status  What the research loop has tried, found and confirmed
   polymarket   Calibration study on resolved Polymarket markets: do any prices beat their cost, confirmed on a later half? (read-only)
+  kalshi       Calibration study on settled Kalshi markets (Coinbase's prediction markets), real bid/ask and fees (read-only)
   goal         Account size and time needed for a daily profit target, with everything reinvested (--daily, --start, --monthly-deposit)
   flows        Free exchange-flow (Coin Metrics, BTC/ETH) filter for trend-hold vs the same flows time-shifted
   markets      Luck-controlled test of strategies on a folder of exported price CSVs (--dir): stocks, ETFs, gold, forex
@@ -200,6 +204,11 @@ export async function main(argv: readonly string[]): Promise<number> {
       runs: { type: 'string', default: String(DEFAULT_MC_OPTIONS.runs) },
       candidates: { type: 'string', default: '10000' },
       csv: { type: 'string' },
+      'kalshi-days': { type: 'string', default: '120' },
+      'kalshi-windows': { type: 'string', default: '150' },
+      'kalshi-pages': { type: 'string', default: '2' },
+      'kalshi-min-volume': { type: 'string', default: '50' },
+      'kalshi-max': { type: 'string', default: '6000' },
       'poly-markets': { type: 'string', default: '3000' },
       'poly-min-volume': { type: 'string', default: '50000' },
       'poly-horizons': { type: 'string', default: '1,7,30' },
@@ -1110,6 +1119,57 @@ export async function main(argv: readonly string[]): Promise<number> {
       lines.push('', confirmed === 0
         ? 'Nothing survived the later half: no price bucket paid after costs beyond what luck produces. No bot is justified.'
         : `${confirmed} rule(s) survived. That is a lead: paper-trade it before believing it, and re-run as new markets resolve.`);
+      process.stdout.write(`${lines.join('\n')}\n`);
+      return 0;
+    }
+
+    case 'kalshi': {
+      const cacheDir = 'data/cache/kalshi';
+      const afterOpen = [0.25, 1, 4];
+      const sampled = await sampleSettledMarkets({
+        days: Math.trunc(num(values['kalshi-days'], 'kalshi-days')), windows: Math.trunc(num(values['kalshi-windows'], 'kalshi-windows')),
+        pagesPerWindow: Math.trunc(num(values['kalshi-pages'], 'kalshi-pages')), minVolume: num(values['kalshi-min-volume'], 'kalshi-min-volume'),
+        seed: Math.trunc(num(values.seed, 'seed')), cacheDir,
+      });
+      // A seeded shuffle, not the first N, so the cap does not favour whichever series the API lists first.
+      const pick = mulberry32(Math.trunc(num(values.seed, 'seed')) + 1);
+      const markets = sampled.map((m) => ({ m, k: pick() })).sort((a, b) => a.k - b.k)
+        .slice(0, Math.trunc(num(values['kalshi-max'], 'kalshi-max'))).map((x) => x.m);
+      process.stderr.write(`${markets.length} of ${sampled.length} settled markets that traded; downloading hourly bid/ask history...\n`);
+      let done = 0;
+      const all: KalshiObservation[] = [];
+      await mapPool(markets, 3, async (m) => {
+        try {
+          all.push(...buildKalshiObservations(m, await fetchKalshiCandles(m, cacheDir), afterOpen.map((h) => h)));
+        } catch (error) {
+          process.stderr.write(`skip ${m.ticker}: ${error instanceof Error ? error.message : String(error)}\n`);
+        }
+        done += 1;
+        if (done % 250 === 0) process.stderr.write(`  ${done}/${markets.length}\n`);
+      });
+      const study = runKalshiStudy(all);
+      const c = (v: number): string => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}c`;
+      const bySeries = new Map<string, number>();
+      for (const m of markets) bySeries.set(m.series, (bySeries.get(m.series) ?? 0) + 1);
+      const top = [...bySeries.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, n]) => `${k}:${n}`).join(' ');
+      const lines = [
+        `KALSHI CALIBRATION  ${markets.length} settled markets that traded, ${study.observations} market-time observations`,
+        'Buys at the real ask (Yes) or 1 - bid (No) plus Kalshi\'s fee; gain per $1 contract; one cluster per event; earlier half chooses rules, later half confirms.',
+        `Most common series: ${top}`,
+        '',
+        'ALL DATA (hours after open, mid-price bucket, side)',
+      ];
+      for (const r of study.all.filter((x) => x.clusters >= 15)) {
+        lines.push(`  ${String(r.afterOpenHours).padStart(4)}h  ${kalshiBucketLabel(r.bucket).padEnd(8)} buy ${r.side.padEnd(3)}  avg price ${(r.avgPrice * 100).toFixed(0).padStart(3)}c  gain ${c(r.mean).padStart(7)}  events ${String(r.clusters).padStart(5)}  p=${r.p.toFixed(3)}`);
+      }
+      lines.push('', `SELECTED ON THE EARLIER HALF (${study.selected.length}); confirmation bar on the later half (from ${new Date(study.trainEnd * 1000).toISOString().slice(0, 10)}): p < ${study.testBar.toFixed(4)}`);
+      for (const v of study.selected) {
+        lines.push(`  ${v.afterOpenHours}h ${kalshiBucketLabel(v.bucket)} buy ${v.side}: earlier ${c(v.train.mean)} (p=${v.train.p.toFixed(3)}) -> later ${v.test ? `${c(v.test.mean)} (p=${v.test.p.toFixed(3)}, ${v.test.clusters} events)` : 'no data'}  ${v.confirmed ? 'CONFIRMED' : 'not confirmed'}`);
+      }
+      const confirmed = study.selected.filter((v) => v.confirmed).length;
+      lines.push('', confirmed === 0
+        ? 'Nothing survived the later half: no price bucket paid after the real spread and fee beyond what luck produces. No bot is justified.'
+        : `${confirmed} rule(s) survived. That is a lead: paper-trade it before believing it, and re-run on a fresh sample.`);
       process.stdout.write(`${lines.join('\n')}\n`);
       return 0;
     }

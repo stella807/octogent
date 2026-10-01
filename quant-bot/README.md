@@ -1222,6 +1222,31 @@ so real fills would be worse. No Polymarket bot was built, because none was
 justified. Real trading would also need a wallet key, which this repo never
 takes, and Polymarket's availability depends on where you live.
 
+**Kalshi / Coinbase prediction markets (`kalshi`, 2026-10-01).** Coinbase's
+prediction markets run on Kalshi, whose market data is public (no key; the
+command is read-only and can place no order). Kalshi's history carries the
+real bid and ask, so a trade is filled at the ask (Yes) or one minus the bid
+(No), plus Kalshi's fee of 7% x price x (1 - price). Each market is looked at
+0.25, 1 and 4 hours AFTER it opened, which is known when you trade (many
+Kalshi markets close early on the event, so anchoring on the close would pick
+winners in advance). Parlays are excluded, markets are sampled from random
+one-hour windows of the last 120 days, errors are clustered by event, and
+rules are chosen on the earlier half and confirmed on the later half.
+
+```
+pnpm cli kalshi --kalshi-max 6000
+```
+
+Result on 6,000 settled markets that traded (4,807 usable observations; most
+were baseball player props, daily crypto and gold strikes, and table-tennis
+matches): **no rule was even selected on the earlier half**, so nothing was
+confirmed. The "cheap, pays a lot" case (buy Yes at 1-15c) lost 1.9c per
+contract at 1-5c and was flat at 5-15c after the spread and fee; buying No
+lost 3-15c everywhere, which is the spread and fee with no mispricing to
+offset them. No Kalshi bot was built. Not yet tested: pricing the crypto and
+gold strikes from a volatility model on their own price data, where this repo
+does have inputs.
+
 **Money each bot needs.** The binding limit is the $1 minimum order.
 Measured from each strategy's smallest entry over BTC history:
 full-position bots (trend-hold, buy-and-hold, coin-flip, every 1-minute bot)
