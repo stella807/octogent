@@ -1156,6 +1156,26 @@ there (best p = 0.13 before any correction for trying three). Free exchange
 flow does not improve trend-hold, so no bot was added. Arkham's whale-sized
 transfers might differ, and remain untested until a key is set.
 
+**What a daily profit goal costs (2026-10-01).** Profit scales with the money
+traded, not with the bot, so a daily target is a capital requirement.
+Capital needed = target per day x 365 / yearly return:
+
+| Yearly return (before losses) | $5 a day | $50 a day | $100 a day |
+|---|---|---|---|
+| 35% (best tested rule, bull-market heavy) | $5,200 | $52,000 | $104,000 |
+| 20% | $9,100 | $91,000 | $182,000 |
+| 10% (more typical) | $18,300 | $183,000 | $365,000 |
+
+A $25 account at 35% a year earns about $8.75 a year, or $0.02 a day. $5 a
+day on $25 would be 20% a day, about 7,000% a year; no rule tested here comes
+close, and a backtest that says otherwise has been fitted to the past (the
+research loop's development winners all lost on coins they had not seen).
+These returns are before drawdowns: BTC has fallen 50-80% several times, and a
+bad year erases a good one. Borrowing or leverage to reach a daily target
+raises the chance of losing the account, not the expected return. The fleet is
+a fair test of whether any rule beats luck; it is not a way to turn $25 into a
+daily income.
+
 **Money each bot needs.** The binding limit is the $1 minimum order.
 Measured from each strategy's smallest entry over BTC history:
 full-position bots (trend-hold, buy-and-hold, coin-flip, every 1-minute bot)
