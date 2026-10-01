@@ -1111,6 +1111,26 @@ the chart and pass the file with `--csv`. The loader reads the export by
 its header: TradingView's column names, any indicator columns (ignored), and
 a missing Volume column (read as zero).
 
+**Other markets: stocks, ETFs, gold, forex (`markets`).** Their history is not
+reachable from the sandbox (Yahoo and Stooq block it, Alpha Vantage needs a
+key), so the files come from you. On TradingView open the chart, choose
+"Export chart data", pick a daily timeframe and the longest range, and save
+one CSV per ticker into one folder (`data/markets/SPY.csv`, `QQQ.csv`, gold,
+`EURUSD.csv`, and so on; the file name becomes the market name). Then:
+
+```
+pnpm cli markets --dir data/markets --equity 1000
+pnpm cli markets --dir data/markets --strategies trend-hold,golden-cross
+```
+
+Each strategy runs at its default parameters, walk-forward, on every file and
+on that file's shuffled prices, and the table shows how many markets beat
+their own shuffled run and the median return. Costs default to 5 bps fee plus
+5 bps slippage a side (a commission-free broker) instead of crypto's ~60 bps;
+change them with `--market-fee-bps` and `--market-slippage-bps`, but do not
+lower them to flatter a result. Fewer than 30 files cannot separate skill from
+luck and the report says so. It prints; it never trades.
+
 **Money each bot needs.** The binding limit is the $1 minimum order.
 Measured from each strategy's smallest entry over BTC history:
 full-position bots (trend-hold, buy-and-hold, coin-flip, every 1-minute bot)

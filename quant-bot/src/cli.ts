@@ -68,6 +68,7 @@ import {
 import { alignCandles, alignmentCoverage } from './portfolio/align.ts';
 import { alignSentiment, fetchSentiment } from './data/sentiment.ts';
 import { alignNetflow, arkhamTokenId, loadWhaleFlows } from './data/arkham.ts';
+import { formatMarketTest, loadMarketsDir, stockConfig, testMarkets } from './research/markets.ts';
 import {
   candidateId, confirmedBotSpecs, emptyState, evaluateSet, formatResearchStatus, loadConfirmed, loadState,
   passesDev, passesHoldout, sampleCandidate, saveState, writeJsonAtomic, type TrialRecord,
@@ -95,6 +96,7 @@ quant-bot — crypto strategy research and paper trading
   whales       Arkham whale flows (needs ARKHAM_API_KEY): --symbol shows recent exchange netflow; --symbols votes trend-hold-whales vs trend-hold
   research     Background search for better strategies: candidates are screened on the fleet's coins and confirmed once on coins never used; winners join as validators
   research-status  What the research loop has tried, found and confirmed
+  markets      Luck-controlled test of strategies on a folder of exported price CSVs (--dir): stocks, ETFs, gold, forex
   fleet-add    Add candidates (--strategy on --symbols) as validators; they trade real money only once the fleet deems them worthy
   status       Paper account profit/loss and every open position; --live reads your real exchange account
   screen       Walk-forward test a strategy on every --quote market of an exchange; keep what passes
@@ -190,6 +192,9 @@ export async function main(argv: readonly string[]): Promise<number> {
       runs: { type: 'string', default: String(DEFAULT_MC_OPTIONS.runs) },
       candidates: { type: 'string', default: '10000' },
       csv: { type: 'string' },
+      dir: { type: 'string' },
+      'market-fee-bps': { type: 'string', default: '5' },
+      'market-slippage-bps': { type: 'string', default: '5' },
       since: { type: 'string' },
       until: { type: 'string' },
       synthetic: { type: 'boolean', default: false },
@@ -1047,6 +1052,23 @@ export async function main(argv: readonly string[]): Promise<number> {
           ? 'The whale filter earns its place; add trend-hold-whales bots with fleet-add.'
           : 'The whale filter does not beat plain trend-hold by more than luck; the fleet keeps trend-hold.',
       ].join('\n') + '\n');
+      return 0;
+    }
+
+    case 'markets': {
+      if (!values.dir) throw new Error('markets needs --dir, a folder of TradingView "Export chart data" CSVs, one per ticker');
+      const { markets, skipped } = await loadMarketsDir(values.dir as string);
+      if (markets.size === 0) throw new Error(`no readable CSV files in ${String(values.dir)}`);
+      const names = values.strategies
+        ? (values.strategies as string).split(',').map((n) => n.trim()).filter(Boolean)
+        : ['buy-and-hold', 'trend-hold', 'trend-vote', 'golden-cross', 'supertrend-hold', 'momentum-vote'];
+      const report = testMarkets(names, markets, stockConfig({
+        equity: num(values.equity, 'equity'),
+        feeBps: num(values['market-fee-bps'], 'market-fee-bps'),
+        slippageBps: num(values['market-slippage-bps'], 'market-slippage-bps'),
+      }));
+      const note = skipped.map((s) => `skipped ${s.file}: ${s.reason}`);
+      process.stdout.write(`${[formatMarketTest(report), ...(note.length ? ['', ...note] : [])].join('\n')}\n`);
       return 0;
     }
 
