@@ -73,6 +73,7 @@ import { formatMarketTest, loadMarketsDir, stockConfig, testMarkets } from './re
 import { coinMetricsAsset, fetchExchangeNetflow } from './data/coinmetrics.ts';
 import { flowEdge } from './research/flow-test.ts';
 import { formatGoal } from './research/goal.ts';
+import { addForecast, formatForecasts, loadForecasts, resolveForecast, saveForecasts } from './research/forecast-log.ts';
 import { fetchPriceHistory, fetchResolvedMarkets } from './data/polymarket.ts';
 import { bucketLabel, buildObservations, runStudy, type Observation } from './research/polymarket.ts';
 import { fetchKalshiCandles, sampleSettledMarkets } from './data/kalshi.ts';
@@ -106,6 +107,7 @@ quant-bot — crypto strategy research and paper trading
   research-status  What the research loop has tried, found and confirmed
   polymarket   Calibration study on resolved Polymarket markets: do any prices beat their cost, confirmed on a later half? (read-only)
   kalshi       Calibration study on settled Kalshi markets (Coinbase's prediction markets), real bid/ask and fees (read-only)
+  forecast     Paper forecast log: add / resolve / list probabilities scored against the market (no money)
   goal         Account size and time needed for a daily profit target, with everything reinvested (--daily, --start, --monthly-deposit)
   flows        Free exchange-flow (Coin Metrics, BTC/ETH) filter for trend-hold vs the same flows time-shifted
   markets      Luck-controlled test of strategies on a folder of exported price CSVs (--dir): stocks, ETFs, gold, forex
@@ -204,6 +206,16 @@ export async function main(argv: readonly string[]): Promise<number> {
       runs: { type: 'string', default: String(DEFAULT_MC_OPTIONS.runs) },
       candidates: { type: 'string', default: '10000' },
       csv: { type: 'string' },
+      action: { type: 'string' },
+      id: { type: 'string' },
+      question: { type: 'string' },
+      outcome: { type: 'string' },
+      p: { type: 'string' },
+      'market-p': { type: 'string' },
+      'market-source': { type: 'string' },
+      'event-time': { type: 'string' },
+      won: { type: 'string' },
+      note: { type: 'string' },
       'kalshi-days': { type: 'string', default: '120' },
       'kalshi-windows': { type: 'string', default: '150' },
       'kalshi-pages': { type: 'string', default: '2' },
@@ -1171,6 +1183,34 @@ export async function main(argv: readonly string[]): Promise<number> {
         ? 'Nothing survived the later half: no price bucket paid after the real spread and fee beyond what luck produces. No bot is justified.'
         : `${confirmed} rule(s) survived. That is a lead: paper-trade it before believing it, and re-run on a fresh sample.`);
       process.stdout.write(`${lines.join('\n')}\n`);
+      return 0;
+    }
+
+    case 'forecast': {
+      const path = join(dirname(dirname(values.fleet as string)), 'forecasts', 'forecasts.json');
+      const action = (values.action as string | undefined) ?? 'list';
+      const now = new Date().toISOString();
+      const list = await loadForecasts(path);
+      if (action === 'add') {
+        const need = (k: string, v: string | undefined): string => {
+          if (!v) throw new Error(`forecast add needs --${k}`);
+          return v;
+        };
+        const entry = {
+          id: need('id', values.id), question: need('question', values.question), outcome: need('outcome', values.outcome),
+          p: num(need('p', values.p), 'p'), market: num(need('market-p', values['market-p']), 'market-p'),
+          marketSource: need('market-source', values['market-source']), eventTime: need('event-time', values['event-time']),
+          ...(values.note ? { note: values.note as string } : {}),
+        };
+        await saveForecasts(path, addForecast(list, entry, now));
+      } else if (action === 'resolve') {
+        const won = values.won as string | undefined;
+        if (won !== 'yes' && won !== 'no') throw new Error('forecast resolve needs --id and --won yes|no');
+        await saveForecasts(path, resolveForecast(list, values.id as string, won === 'yes', now));
+      } else if (action !== 'list') {
+        throw new Error('forecast takes add, resolve or list');
+      }
+      process.stdout.write(`${formatForecasts(await loadForecasts(path))}\n`);
       return 0;
     }
 

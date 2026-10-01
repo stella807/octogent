@@ -1247,6 +1247,22 @@ offset them. No Kalshi bot was built. Not yet tested: pricing the crypto and
 gold strikes from a volatility model on their own price data, where this repo
 does have inputs.
 
+**Paper forecast log (`forecast`).** A probability written down before an
+outcome is known, next to the market's price at that moment, scored with the
+Brier score when it resolves. It is how to test, with no money at risk,
+whether research beats posted prices.
+
+```
+pnpm cli forecast --action add --id ID --question "..." --outcome "Tulsa wins" --p 0.52 --market-p 0.465 --market-source "Polymarket" --event-time 2026-10-02T01:00:00Z
+pnpm cli forecast --action resolve --id ID --won yes
+pnpm cli forecast            # list and score
+```
+
+The entries are kept in `.quant-bot/forecasts/forecasts.json`, and a copy is
+committed as `forecasts/forecasts.json` so the commit time shows each forecast
+was made before its game. One result is mostly luck; it takes dozens of
+forecasts, and beating the market consistently is rare.
+
 **Money each bot needs.** The binding limit is the $1 minimum order.
 Measured from each strategy's smallest entry over BTC history:
 full-position bots (trend-hold, buy-and-hold, coin-flip, every 1-minute bot)

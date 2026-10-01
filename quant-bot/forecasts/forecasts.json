@@ -1,0 +1,26 @@
+[
+  {
+    "id": "tulsa-unt-2026-10-01",
+    "question": "North Texas at Tulsa, Thu Oct 1 2026 9pm ET: does Tulsa win?",
+    "outcome": "Tulsa wins",
+    "p": 0.52,
+    "market": 0.465,
+    "marketSource": "Polymarket mid 2026-10-01 16:37Z (DraftKings via ESPN had UNT -122/Tulsa +102; pick sites had Tulsa -115)",
+    "eventTime": "2026-10-02T01:00:00Z",
+    "note": "Lean from Hayes (Tulsa QB) returning, home field, defense; sources disagree on which team is the 1.5-pt favorite; storms possible",
+    "loggedAt": "2026-10-01T16:52:57.737Z",
+    "result": null
+  },
+  {
+    "id": "chiefs-raiders-2026-10-04",
+    "question": "Chiefs at Raiders, Sun Oct 4 2026 4:25pm ET: do the Chiefs win?",
+    "outcome": "Chiefs win",
+    "p": 0.64,
+    "market": 0.655,
+    "marketSource": "Polymarket 2026-10-01 (DraftKings no-vig 65.8%; KC -4.5)",
+    "eventTime": "2026-10-04T20:25:00Z",
+    "note": "Matches the market; no edge claimed; injury reports not final",
+    "loggedAt": "2026-10-01T16:52:57.926Z",
+    "result": null
+  }
+]
