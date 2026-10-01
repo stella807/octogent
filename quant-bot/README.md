@@ -1131,6 +1131,31 @@ change them with `--market-fee-bps` and `--market-slippage-bps`, but do not
 lower them to flatter a result. Fewer than 30 files cannot separate skill from
 luck and the report says so. It prints; it never trades.
 
+**Free whale-style data: exchange flows (`flows`, 2026-10-01).** Arkham needs
+a key, so this uses Coin Metrics' free community API instead: daily USD flowing
+into and out of labelled exchange addresses, 15 years for BTC and 11 for ETH
+and nothing for other coins. It counts every transfer, not only whale-sized
+ones, so it is a weaker stand-in. The test is `trend-hold-whales` (no new entry
+while the last 7 days were net inflow to exchanges) against plain trend-hold,
+at fixed parameters, and against the same filter run on the flows rotated by
+at least 90 days, which keeps the flows and cuts only their link to the prices.
+
+```
+pnpm cli flows --exchange coinbase --bars 4000 --equity 25 --fee-bps 60 --slippage-bps 5 --max-drawdown 60 --max-daily-loss 100 --shifts 60
+```
+
+| Market | Plain trend-hold | With flow filter | Rotated flows (median) | p |
+|---|---|---|---|---|
+| BTC/USD, 10 years | +145% | +124% | +103% | 0.31 |
+| ETH/USD, 10 years | +40% | +19% | +40% | 0.82 |
+
+**Result: no.** The filter did worse than plain trend-hold on both coins and
+sat inside the range of its own time-shifted runs. The pre-registered
+7-day window and two other windows (3 and 14 days) agreed that nothing is
+there (best p = 0.13 before any correction for trying three). Free exchange
+flow does not improve trend-hold, so no bot was added. Arkham's whale-sized
+transfers might differ, and remain untested until a key is set.
+
 **Money each bot needs.** The binding limit is the $1 minimum order.
 Measured from each strategy's smallest entry over BTC history:
 full-position bots (trend-hold, buy-and-hold, coin-flip, every 1-minute bot)

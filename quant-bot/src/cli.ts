@@ -69,6 +69,8 @@ import { alignCandles, alignmentCoverage } from './portfolio/align.ts';
 import { alignSentiment, fetchSentiment } from './data/sentiment.ts';
 import { alignNetflow, arkhamTokenId, loadWhaleFlows } from './data/arkham.ts';
 import { formatMarketTest, loadMarketsDir, stockConfig, testMarkets } from './research/markets.ts';
+import { coinMetricsAsset, fetchExchangeNetflow } from './data/coinmetrics.ts';
+import { flowEdge } from './research/flow-test.ts';
 import {
   candidateId, confirmedBotSpecs, emptyState, evaluateSet, formatResearchStatus, loadConfirmed, loadState,
   passesDev, passesHoldout, sampleCandidate, saveState, writeJsonAtomic, type TrialRecord,
@@ -96,6 +98,7 @@ quant-bot — crypto strategy research and paper trading
   whales       Arkham whale flows (needs ARKHAM_API_KEY): --symbol shows recent exchange netflow; --symbols votes trend-hold-whales vs trend-hold
   research     Background search for better strategies: candidates are screened on the fleet's coins and confirmed once on coins never used; winners join as validators
   research-status  What the research loop has tried, found and confirmed
+  flows        Free exchange-flow (Coin Metrics, BTC/ETH) filter for trend-hold vs the same flows time-shifted
   markets      Luck-controlled test of strategies on a folder of exported price CSVs (--dir): stocks, ETFs, gold, forex
   fleet-add    Add candidates (--strategy on --symbols) as validators; they trade real money only once the fleet deems them worthy
   status       Paper account profit/loss and every open position; --live reads your real exchange account
@@ -192,6 +195,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       runs: { type: 'string', default: String(DEFAULT_MC_OPTIONS.runs) },
       candidates: { type: 'string', default: '10000' },
       csv: { type: 'string' },
+      'flow-days': { type: 'string', default: '7' },
+      shifts: { type: 'string', default: '40' },
       dir: { type: 'string' },
       'market-fee-bps': { type: 'string', default: '5' },
       'market-slippage-bps': { type: 'string', default: '5' },
@@ -1052,6 +1057,28 @@ export async function main(argv: readonly string[]): Promise<number> {
           ? 'The whale filter earns its place; add trend-hold-whales bots with fleet-add.'
           : 'The whale filter does not beat plain trend-hold by more than luck; the fleet keeps trend-hold.',
       ].join('\n') + '\n');
+      return 0;
+    }
+
+    case 'flows': {
+      const symbols = splitSymbols((values.symbols as string | undefined) ?? 'BTC/USD,ETH/USD');
+      const flowDays = Math.trunc(num(values['flow-days'], 'flow-days'));
+      const shifts = Math.trunc(num(values.shifts, 'shifts'));
+      const lines = [
+        `FLOW TEST  trend-hold with a ${flowDays}-day exchange-flow filter (Coin Metrics, free) vs the same flows rotated by ${shifts} offsets`,
+        'Out-of-sample walk-forward returns, parameters fixed (no re-tuning). A rotated run keeps the flows and cuts only their link to the prices.',
+        '',
+      ];
+      for (const symbol of symbols) {
+        const candles = await fetchCandles({ exchange: values.exchange as string, symbol, timeframe: '1d', bars: bars, cacheDir: 'data/cache' });
+        const net = await fetchExchangeNetflow(coinMetricsAsset(symbol), { startTime: '2010-01-01' });
+        const flow = alignNetflow(candles, net.flows, net.covered);
+        const r = flowEdge(symbol, candles, flow, { ...DEFAULT_WF_OPTIONS, config }, { flowDays }, shifts);
+        const sorted = [...r.shifted].sort((a, b) => a - b);
+        lines.push(`  ${symbol.padEnd(8)} plain ${fmtPct(r.plain)}   with flows ${fmtPct(r.real)}   rotated median ${fmtPct(sorted[Math.floor(sorted.length / 2)] ?? 0)}   p=${r.p.toFixed(3)}   trades ${r.realTrades}`);
+      }
+      lines.push('', 'p is the share of rotated runs that did at least as well as the real one. Below 0.05 on both markets, and held up in paper, would be a lead; anything else is luck.');
+      process.stdout.write(`${lines.join('\n')}\n`);
       return 0;
     }
 
