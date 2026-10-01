@@ -72,6 +72,8 @@ import { formatMarketTest, loadMarketsDir, stockConfig, testMarkets } from './re
 import { coinMetricsAsset, fetchExchangeNetflow } from './data/coinmetrics.ts';
 import { flowEdge } from './research/flow-test.ts';
 import { formatGoal } from './research/goal.ts';
+import { fetchPriceHistory, fetchResolvedMarkets } from './data/polymarket.ts';
+import { bucketLabel, buildObservations, runStudy, type Observation } from './research/polymarket.ts';
 import {
   candidateId, confirmedBotSpecs, emptyState, evaluateSet, formatResearchStatus, loadConfirmed, loadState,
   passesDev, passesHoldout, sampleCandidate, saveState, writeJsonAtomic, type TrialRecord,
@@ -99,6 +101,7 @@ quant-bot — crypto strategy research and paper trading
   whales       Arkham whale flows (needs ARKHAM_API_KEY): --symbol shows recent exchange netflow; --symbols votes trend-hold-whales vs trend-hold
   research     Background search for better strategies: candidates are screened on the fleet's coins and confirmed once on coins never used; winners join as validators
   research-status  What the research loop has tried, found and confirmed
+  polymarket   Calibration study on resolved Polymarket markets: do any prices beat their cost, confirmed on a later half? (read-only)
   goal         Account size and time needed for a daily profit target, with everything reinvested (--daily, --start, --monthly-deposit)
   flows        Free exchange-flow (Coin Metrics, BTC/ETH) filter for trend-hold vs the same flows time-shifted
   markets      Luck-controlled test of strategies on a folder of exported price CSVs (--dir): stocks, ETFs, gold, forex
@@ -197,6 +200,10 @@ export async function main(argv: readonly string[]): Promise<number> {
       runs: { type: 'string', default: String(DEFAULT_MC_OPTIONS.runs) },
       candidates: { type: 'string', default: '10000' },
       csv: { type: 'string' },
+      'poly-markets': { type: 'string', default: '3000' },
+      'poly-min-volume': { type: 'string', default: '50000' },
+      'poly-horizons': { type: 'string', default: '1,7,30' },
+      'cost-cents': { type: 'string', default: '2' },
       daily: { type: 'string', default: '140' },
       start: { type: 'string', default: '25' },
       'monthly-deposit': { type: 'string', default: '0' },
@@ -1062,6 +1069,48 @@ export async function main(argv: readonly string[]): Promise<number> {
           ? 'The whale filter earns its place; add trend-hold-whales bots with fleet-add.'
           : 'The whale filter does not beat plain trend-hold by more than luck; the fleet keeps trend-hold.',
       ].join('\n') + '\n');
+      return 0;
+    }
+
+    case 'polymarket': {
+      const cacheDir = 'data/cache/polymarket';
+      const horizons = (values['poly-horizons'] as string).split(',').map((h) => Number(h.trim())).filter((h) => h > 0);
+      const cost = num(values['cost-cents'], 'cost-cents') / 100;
+      const markets = await fetchResolvedMarkets({
+        count: Math.trunc(num(values['poly-markets'], 'poly-markets')), minVolume: num(values['poly-min-volume'], 'poly-min-volume'), cacheDir,
+      });
+      process.stderr.write(`${markets.length} resolved binary markets; downloading daily price history...\n`);
+      let done = 0;
+      const all: Observation[] = [];
+      await mapPool(markets, 4, async (m) => {
+        try {
+          all.push(...buildObservations(m, await fetchPriceHistory(m.yesToken, cacheDir), horizons));
+        } catch (error) {
+          process.stderr.write(`skip ${m.id}: ${error instanceof Error ? error.message : String(error)}\n`);
+        }
+        done += 1;
+        if (done % 250 === 0) process.stderr.write(`  ${done}/${markets.length}\n`);
+      });
+      const study = runStudy(all, cost, markets.length);
+      const pct = (v: number): string => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}c`;
+      const lines = [
+        `POLYMARKET CALIBRATION  ${study.markets} resolved Yes/No markets, ${study.observations} market-horizon observations, cost ${(cost * 100).toFixed(1)}c per share per side`,
+        `Gain per $1 share bought at the quoted price + cost; one cluster per event; earlier half chooses rules, later half (from ${new Date(study.trainEnd * 1000).toISOString().slice(0, 10)}) confirms.`,
+        '',
+        'ALL DATA (each row: horizon, Yes-price bucket, side; mean gain per share; events; one-sided p)',
+      ];
+      for (const r of study.all.filter((x) => x.clusters >= 15)) {
+        lines.push(`  ${String(r.horizon).padStart(2)}d  ${bucketLabel(r.bucket).padEnd(8)} buy ${r.side.padEnd(3)}  avg price ${(r.avgPrice * 100).toFixed(0).padStart(3)}c  gain ${pct(r.mean).padStart(7)}  events ${String(r.clusters).padStart(5)}  p=${r.p.toFixed(3)}`);
+      }
+      lines.push('', `SELECTED ON THE EARLIER HALF (${study.selected.length}); confirmation bar on the later half: p < ${study.testBar.toFixed(4)}`);
+      for (const v of study.selected) {
+        lines.push(`  ${v.horizon}d ${bucketLabel(v.bucket)} buy ${v.side}: earlier ${pct(v.train.mean)} (p=${v.train.p.toFixed(3)}) -> later ${v.test ? `${pct(v.test.mean)} (p=${v.test.p.toFixed(3)}, ${v.test.clusters} events)` : 'no data'}  ${v.confirmed ? 'CONFIRMED' : 'not confirmed'}`);
+      }
+      const confirmed = study.selected.filter((v) => v.confirmed).length;
+      lines.push('', confirmed === 0
+        ? 'Nothing survived the later half: no price bucket paid after costs beyond what luck produces. No bot is justified.'
+        : `${confirmed} rule(s) survived. That is a lead: paper-trade it before believing it, and re-run as new markets resolve.`);
+      process.stdout.write(`${lines.join('\n')}\n`);
       return 0;
     }
 

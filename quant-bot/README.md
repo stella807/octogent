@@ -1195,6 +1195,33 @@ pnpm cli goal --daily 140 --start 25 --monthly-deposit 500
 Deposits move the date far more than strategy does, and a losing year pushes
 every date back.
 
+**Polymarket prediction markets (`polymarket`, 2026-10-01).** Read-only: the
+command uses Polymarket's public Gamma and CLOB APIs, with no key and no
+wallet, and can place no order. It asks one question: when a market priced Yes
+at p, how often did Yes happen, after the cost of trading? Each observation is
+a resolved Yes/No market priced 1, 7 or 30 days before its SCHEDULED end and
+only if it was still open then (anchoring on the actual close would select
+markets that were about to resolve). Errors are clustered by event, since the
+outcomes of one election are close to one bet. Rules are chosen on the earlier
+half of the markets by end date and confirmed once on the later half, at a bar
+that tightens with the number of rules chosen.
+
+```
+pnpm cli polymarket --poly-markets 12000 --poly-min-volume 10000 --cost-cents 1
+```
+
+Result on 9,656 resolved markets (15,802 market-horizon observations), at 1
+cent per share per side: **nothing survived the later half**. Four rules
+looked good on the earlier half; none cleared the bar on the later one. The
+nearest, buying 95-99c favourites, earned small gains with rare large losses
+and then lost 8.5c a share at 7 days in the later half. Three things limit the
+study: only Yes/No markets with a clean resolution and a fresh price are used,
+the normal approximation behind the p-values is unreliable when losses are
+rare (the 95-99c rows), and prices come from daily history, not order books,
+so real fills would be worse. No Polymarket bot was built, because none was
+justified. Real trading would also need a wallet key, which this repo never
+takes, and Polymarket's availability depends on where you live.
+
 **Money each bot needs.** The binding limit is the $1 minimum order.
 Measured from each strategy's smallest entry over BTC history:
 full-position bots (trend-hold, buy-and-hold, coin-flip, every 1-minute bot)
