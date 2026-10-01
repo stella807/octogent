@@ -1176,6 +1176,25 @@ raises the chance of losing the account, not the expected return. The fleet is
 a fair test of whether any rule beats luck; it is not a way to turn $25 into a
 daily income.
 
+**Saving up to a daily goal (`goal`).** The fleet already reinvests: bots
+are added only from banked profit. `goal` does the arithmetic for a target
+such as $140 a day with everything reinvested, and optionally a monthly
+deposit. It is not a forecast.
+
+```
+pnpm cli goal --daily 140 --start 25
+pnpm cli goal --daily 140 --start 25 --monthly-deposit 500
+```
+
+| Yearly return | Account for $140/day | From $25, no deposits | From $25 + $500/month |
+|---|---|---|---|
+| 35% (best tested, bull-market heavy) | $146,000 | 28.9 years | 7.2 years |
+| 20% | $255,500 | 50.7 years | 12.0 years |
+| 10% | $511,000 | over 100 years | 23.3 years |
+
+Deposits move the date far more than strategy does, and a losing year pushes
+every date back.
+
 **Money each bot needs.** The binding limit is the $1 minimum order.
 Measured from each strategy's smallest entry over BTC history:
 full-position bots (trend-hold, buy-and-hold, coin-flip, every 1-minute bot)

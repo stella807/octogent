@@ -71,6 +71,7 @@ import { alignNetflow, arkhamTokenId, loadWhaleFlows } from './data/arkham.ts';
 import { formatMarketTest, loadMarketsDir, stockConfig, testMarkets } from './research/markets.ts';
 import { coinMetricsAsset, fetchExchangeNetflow } from './data/coinmetrics.ts';
 import { flowEdge } from './research/flow-test.ts';
+import { formatGoal } from './research/goal.ts';
 import {
   candidateId, confirmedBotSpecs, emptyState, evaluateSet, formatResearchStatus, loadConfirmed, loadState,
   passesDev, passesHoldout, sampleCandidate, saveState, writeJsonAtomic, type TrialRecord,
@@ -98,6 +99,7 @@ quant-bot — crypto strategy research and paper trading
   whales       Arkham whale flows (needs ARKHAM_API_KEY): --symbol shows recent exchange netflow; --symbols votes trend-hold-whales vs trend-hold
   research     Background search for better strategies: candidates are screened on the fleet's coins and confirmed once on coins never used; winners join as validators
   research-status  What the research loop has tried, found and confirmed
+  goal         Account size and time needed for a daily profit target, with everything reinvested (--daily, --start, --monthly-deposit)
   flows        Free exchange-flow (Coin Metrics, BTC/ETH) filter for trend-hold vs the same flows time-shifted
   markets      Luck-controlled test of strategies on a folder of exported price CSVs (--dir): stocks, ETFs, gold, forex
   fleet-add    Add candidates (--strategy on --symbols) as validators; they trade real money only once the fleet deems them worthy
@@ -195,6 +197,9 @@ export async function main(argv: readonly string[]): Promise<number> {
       runs: { type: 'string', default: String(DEFAULT_MC_OPTIONS.runs) },
       candidates: { type: 'string', default: '10000' },
       csv: { type: 'string' },
+      daily: { type: 'string', default: '140' },
+      start: { type: 'string', default: '25' },
+      'monthly-deposit': { type: 'string', default: '0' },
       'flow-days': { type: 'string', default: '7' },
       shifts: { type: 'string', default: '40' },
       dir: { type: 'string' },
@@ -1057,6 +1062,16 @@ export async function main(argv: readonly string[]): Promise<number> {
           ? 'The whale filter earns its place; add trend-hold-whales bots with fleet-add.'
           : 'The whale filter does not beat plain trend-hold by more than luck; the fleet keeps trend-hold.',
       ].join('\n') + '\n');
+      return 0;
+    }
+
+    case 'goal': {
+      process.stdout.write(`${formatGoal({
+        daily: num(values.daily, 'daily'),
+        start: num(values.start, 'start'),
+        monthlyDeposit: num(values['monthly-deposit'], 'monthly-deposit'),
+        returns: [10, 20, 35],
+      })}\n`);
       return 0;
     }
 
