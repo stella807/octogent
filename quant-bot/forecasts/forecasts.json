@@ -9,7 +9,8 @@
     "eventTime": "2026-10-02T01:00:00Z",
     "note": "Lean from Hayes (Tulsa QB) returning, home field, defense; sources disagree on which team is the 1.5-pt favorite; storms possible",
     "loggedAt": "2026-10-01T16:52:57.737Z",
-    "result": null
+    "result": 0,
+    "resolvedAt": "2026-10-02T05:14:25.175Z"
   },
   {
     "id": "chiefs-raiders-2026-10-04",
