@@ -22,7 +22,8 @@
     "eventTime": "2026-10-04T20:25:00Z",
     "note": "Matches the market; no edge claimed; injury reports not final",
     "loggedAt": "2026-10-01T16:52:57.926Z",
-    "result": null
+    "result": 1,
+    "resolvedAt": "2026-10-05T00:19:03.703Z"
   },
   {
     "id": "steelers-browns-2026-10-01",
