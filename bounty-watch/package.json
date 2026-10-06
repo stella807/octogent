@@ -2,7 +2,7 @@
   "name": "bounty-watch",
   "version": "0.1.0",
   "private": true,
-  "description": "Polls Algora org boards for newly opened bounties, since Algora publishes no global feed.",
+  "description": "Polls Algora org boards and Cantina bug bounties for newly opened bounties, since neither offers a feed to poll.",
   "type": "module",
   "engines": {
     "node": ">=22"

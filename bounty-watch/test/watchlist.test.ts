@@ -7,6 +7,16 @@ describe("parseWatchlist", () => {
     expect(list.entries).toEqual([{ slug: "acme" }, { slug: "beta", path: "bounties" }]);
   });
 
+  it("accepts a Cantina entry and labels it 'cantina' by default", () => {
+    const list = parseWatchlist({
+      entries: [{ source: "cantina" }, { source: "cantina", slug: "cantina-bb" }],
+    });
+    expect(list.entries).toEqual([
+      { source: "cantina", slug: "cantina" },
+      { source: "cantina", slug: "cantina-bb" },
+    ]);
+  });
+
   it("defaults the reward floor when unset", () => {
     expect(parseWatchlist({ entries: ["acme"] }).minAmountUsd).toBe(50);
   });
@@ -21,6 +31,7 @@ describe("parseWatchlist", () => {
     ["empty entries", { entries: [] }],
     ["blank slug", { entries: [{ slug: "  " }] }],
     ["slug of wrong type", { entries: [{ slug: 7 }] }],
+    ["unknown source", { entries: [{ source: "immunefi", slug: "x" }] }],
   ])("rejects %s", (_label, input) => {
     expect(() => parseWatchlist(input)).toThrow(WatchlistError);
   });

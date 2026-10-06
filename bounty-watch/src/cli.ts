@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { HttpCantinaClient } from "./cantina-client.ts";
 import { HttpBoardClient } from "./client.ts";
 import { pollOnce } from "./poll.ts";
 import { formatReport } from "./report.ts";
 import { FileSeenStore } from "./store.ts";
 import { WatchlistError, loadWatchlist } from "./watchlist.ts";
 
-const USAGE = `bounty-watch — poll Algora org boards for newly opened bounties
+const USAGE = `bounty-watch — poll Algora org boards and Cantina for newly opened bounties
 
 Usage:
   bounty-watch once   [options]   Poll every board once and print what is new
@@ -33,7 +34,7 @@ interface Args {
 }
 
 // Polling faster than this adds no signal — bounties are posted by humans — and only
-// risks Algora rate-limiting the watchlist.
+// risks the sites rate-limiting the watchlist.
 const MIN_INTERVAL_MIN = 5;
 
 export function parseArgs(argv: readonly string[]): Args {
@@ -74,6 +75,7 @@ async function runOnce(args: Args): Promise<void> {
 
   const report = await pollOnce({
     client: new HttpBoardClient(),
+    cantina: new HttpCantinaClient(),
     store: new FileSeenStore(args.state),
     watchlist,
   });

@@ -12,9 +12,10 @@ export interface HttpBoardClientOptions {
 }
 
 const DEFAULT_BASE_URL = "https://algora.io";
-const DEFAULT_TIMEOUT_MS = 20_000;
-// Identifies the poller so Algora can throttle or contact us rather than silently block.
-const DEFAULT_USER_AGENT = "octogent-bounty-watch/0.1 (+https://github.com/stella807/octogent)";
+export const DEFAULT_TIMEOUT_MS = 20_000;
+// Identifies the poller so each site can throttle or contact us rather than silently block.
+export const DEFAULT_USER_AGENT =
+  "octogent-bounty-watch/0.1 (+https://github.com/stella807/octogent)";
 
 export function boardUrl(entry: WatchEntry, baseUrl: string = DEFAULT_BASE_URL): string {
   // Plain /<org>/bounties renders no bounty tables; the community board is the

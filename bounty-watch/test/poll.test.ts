@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { CantinaClient } from "../src/cantina-client.ts";
 import type { BoardClient } from "../src/client.ts";
-import type { WatchEntry, Watchlist } from "../src/domain/types.ts";
+import type { Bounty, WatchEntry, Watchlist } from "../src/domain/types.ts";
 import { pollOnce, seenKey } from "../src/poll.ts";
 import { MemorySeenStore } from "../src/store.ts";
 
@@ -183,6 +184,7 @@ describe("pollOnce", () => {
 
   it("scopes identity per board so the same issue on two boards is tracked separately", () => {
     const base = {
+      source: "algora",
       id: "https://github.com/acme/x/issues/1",
       amountUsd: 10,
       title: "t",
@@ -191,5 +193,90 @@ describe("pollOnce", () => {
       status: "open",
     } as const;
     expect(seenKey({ ...base, org: "one" })).not.toBe(seenKey({ ...base, org: "two" }));
+  });
+
+  describe("with a Cantina entry", () => {
+    const program = (n: number, status: Bounty["status"] = "open"): Bounty => ({
+      id: `https://cantina.xyz/bounties/${n}`,
+      source: "cantina",
+      org: "cantina",
+      amountUsd: 100_000,
+      title: `program ${n}`,
+      url: `https://cantina.xyz/bounties/${n}`,
+      ref: `cantina/p${n}`,
+      status,
+    });
+    const cantinaWith = (result: Bounty[] | Error): CantinaClient => ({
+      async fetchBounties() {
+        if (result instanceof Error) throw result;
+        return result;
+      },
+    });
+
+    it("reports only live programs, alongside Algora boards", async () => {
+      const report = await pollOnce({
+        client: clientFor({
+          acme: board([{ amount: 100, url: "https://github.com/acme/x/issues/1", title: "one" }]),
+        }),
+        cantina: cantinaWith([program(1), program(2, "completed")]),
+        store: new MemorySeenStore(),
+        watchlist: watchlist([{ slug: "acme" }, { source: "cantina", slug: "cantina" }]),
+        sleep: noSleep,
+      });
+
+      expect(report.fresh.map((b) => b.title)).toEqual(["one", "program 1"]);
+    });
+
+    it("tracks programs under the entry's slug", async () => {
+      const store = new MemorySeenStore();
+      await pollOnce({
+        client: clientFor({}),
+        cantina: cantinaWith([program(1)]),
+        store,
+        watchlist: watchlist([{ source: "cantina", slug: "cantina-bb" }]),
+        sleep: noSleep,
+      });
+
+      expect([...(await store.load())]).toEqual(["cantina-bb::https://cantina.xyz/bounties/1"]);
+    });
+
+    it("keeps seen programs when Cantina fails, so they are not re-announced", async () => {
+      const store = new MemorySeenStore();
+      const list = watchlist([{ source: "cantina", slug: "cantina" }]);
+      await pollOnce({
+        client: clientFor({}),
+        cantina: cantinaWith([program(1)]),
+        store,
+        watchlist: list,
+        sleep: noSleep,
+      });
+      await pollOnce({
+        client: clientFor({}),
+        cantina: cantinaWith(new Error("HTTP 503")),
+        store,
+        watchlist: list,
+        sleep: noSleep,
+      });
+      const recovered = await pollOnce({
+        client: clientFor({}),
+        cantina: cantinaWith([program(1)]),
+        store,
+        watchlist: list,
+        sleep: noSleep,
+      });
+
+      expect(recovered.fresh).toHaveLength(0);
+    });
+
+    it("records an error when no Cantina client is configured", async () => {
+      const report = await pollOnce({
+        client: clientFor({}),
+        store: new MemorySeenStore(),
+        watchlist: watchlist([{ source: "cantina", slug: "cantina" }]),
+        sleep: noSleep,
+      });
+
+      expect(report.errors).toEqual([{ slug: "cantina", message: "no Cantina client configured" }]);
+    });
   });
 });

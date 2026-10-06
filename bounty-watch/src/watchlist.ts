@@ -21,7 +21,15 @@ export function parseWatchlist(raw: unknown): Watchlist {
     if (typeof value !== "object" || value === null) {
       throw new WatchlistError(`watchlist.entries[${index}] must be a string or object`);
     }
-    const entry = value as { slug?: unknown; path?: unknown };
+    const entry = value as { source?: unknown; slug?: unknown; path?: unknown };
+    if (entry.source === "cantina") {
+      // Cantina is one site-wide board, so the slug is only the label it is tracked under.
+      const slug = typeof entry.slug === "string" && entry.slug.trim() ? entry.slug : "cantina";
+      return { source: "cantina", slug };
+    }
+    if (entry.source !== undefined && entry.source !== "algora") {
+      throw new WatchlistError(`watchlist.entries[${index}].source must be "algora" or "cantina"`);
+    }
     if (typeof entry.slug !== "string" || entry.slug.trim() === "") {
       throw new WatchlistError(`watchlist.entries[${index}].slug must be a non-empty string`);
     }

@@ -89,7 +89,7 @@ function parseSection(section: string, org: string, status: BountyStatus): Bount
     const title = stripTags(first[2] ?? "");
     const ref = stripTags(links[1]?.[2] ?? "") || url.split("/").slice(-3).join("/");
 
-    bounties.push({ id: url, org, amountUsd, title, url, ref, status });
+    bounties.push({ id: url, source: "algora", org, amountUsd, title, url, ref, status });
   }
 
   return bounties;
